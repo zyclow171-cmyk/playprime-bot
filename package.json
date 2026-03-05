@@ -2,7 +2,7 @@
   "name": "playprime-whatsapp-bot",
   "version": "1.0.0",
   "description": "Bot WhatsApp da Play Prime com Claude AI",
-  "main": "index.js",
+  "main": "node playprime-bot.js",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"
