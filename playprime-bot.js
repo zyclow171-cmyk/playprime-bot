@@ -357,6 +357,21 @@ app.post("/webhook", async (req, res) => {
 });
 
 // ============================================
+// 🖥️ PAINEL DE CONTROLE
+// ============================================
+const path = require("path");
+const fs = require("fs");
+
+app.get("/painel", (req, res) => {
+  const painelPath = path.join(__dirname, "painel-playprime.html");
+  if (fs.existsSync(painelPath)) {
+    res.sendFile(painelPath);
+  } else {
+    res.send("<h2>Painel não encontrado. Faça upload do arquivo painel-playprime.html</h2>");
+  }
+});
+
+// ============================================
 // 📊 STATUS
 // ============================================
 app.get("/status", (req, res) => {
