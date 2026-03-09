@@ -13,20 +13,25 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PORT = process.env.PORT || 3000;
 
-// MEMÓRIA DAS CONVERSAS
-const conversationMemory = {};
-const MAX_HISTORY = 10;
+const memory = {};
+const MAX_HISTORY = 12;
 
 app.get('/webhook', (req, res) => {
+
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+
     res.status(200).send(challenge);
+
   } else {
+
     res.sendStatus(403);
+
   }
+
 });
 
 app.post('/webhook', async (req, res) => {
@@ -35,47 +40,73 @@ app.post('/webhook', async (req, res) => {
 
   const body = req.body;
 
-  if (body.object === 'whatsapp_business_account') {
+  if (body.object !== 'whatsapp_business_account') return;
 
-    const entry = body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const message = changes?.value?.messages?.[0];
+  const entry = body.entry?.[0];
+  const changes = entry?.changes?.[0];
+  const message = changes?.value?.messages?.[0];
 
-    if (!message) return;
+  if (!message) return;
 
-    const from = message.from;
-    let text = '';
+  const from = message.from;
+  let text = '';
 
-    try {
+  try {
 
-      await sendMessage(from, '⏳ Aguarde um momento...');
+    if (message.type === 'text') {
 
-      if (message.type === 'text') {
+      text = message.text.body;
 
-        text = message.text.body;
+    } else if (message.type === 'audio') {
 
-      } else if (message.type === 'audio') {
+      const audioId = message.audio.id;
+      text = await transcribeAudio(audioId);
 
-        const audioId = message.audio.id;
-        text = await transcribeAudio(audioId);
+    } else {
 
-      } else {
-
-        await sendMessage(from, 'Por enquanto só consigo responder texto e áudio! 😊');
-        return;
-
-      }
-
-      const reply = await askClaude(from, text);
-
-      await sendMessage(from, reply);
-
-    } catch (err) {
-
-      console.error('Erro:', err.message);
-      await sendMessage(from, 'Opa, tive um probleminha técnico! Tenta novamente em um instante.');
+      await sendMessage(from, 'Consigo responder apenas texto e áudio por enquanto 🙂');
+      return;
 
     }
+
+    const lower = text.toLowerCase();
+
+    if (lower.includes('teste') || lower.includes('trial') || lower.includes('24h')) {
+
+      await sendMessage(from, 'Perfeito! Vou chamar o Rodrigo agora para liberar seu teste 👍');
+      return;
+
+    }
+
+    if (lower.includes('revenda') || lower.includes('revender') || lower.includes('painel')) {
+
+      await sendMessage(from, 'Legal! Vou chamar o Rodrigo para explicar como funciona nossa revenda 🚀');
+      return;
+
+    }
+
+    if (lower.includes('preço') || lower.includes('valor') || lower.includes('quanto custa')) {
+
+      await sendMessage(from, 'Temos planos a partir de R$24,99 🙂 Vou pedir para o Rodrigo te explicar certinho.');
+      return;
+
+    }
+
+    if (lower.includes('quero') || lower.includes('assinar') || lower.includes('contratar')) {
+
+      await sendMessage(from, 'Perfeito! Já vou chamar o Rodrigo para finalizar seu acesso 👍');
+      return;
+
+    }
+
+    const reply = await askClaude(from, text);
+
+    await sendMessage(from, reply);
+
+  } catch (err) {
+
+    console.log(err.message);
+    await sendMessage(from, 'Tive um pequeno erro aqui 😅 tenta mandar novamente.');
 
   }
 
@@ -85,16 +116,16 @@ async function transcribeAudio(audioId) {
 
   const mediaRes = await axios.get(
     `https://graph.facebook.com/v18.0/${audioId}`,
-    {
-      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
-    }
+    { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
   );
 
   const audioUrl = mediaRes.data.url;
 
   const audioBuffer = await axios.get(audioUrl, {
+
     headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
     responseType: 'arraybuffer'
+
   });
 
   const form = new FormData();
@@ -111,10 +142,12 @@ async function transcribeAudio(audioId) {
     'https://api.openai.com/v1/audio/transcriptions',
     form,
     {
+
       headers: {
         ...form.getHeaders(),
         Authorization: `Bearer ${OPENAI_API_KEY}`
       }
+
     }
   );
 
@@ -124,11 +157,9 @@ async function transcribeAudio(audioId) {
 
 async function askClaude(userId, userMessage) {
 
-  if (!conversationMemory[userId]) {
-    conversationMemory[userId] = [];
-  }
+  if (!memory[userId]) memory[userId] = [];
 
-  const history = conversationMemory[userId];
+  const history = memory[userId];
 
   history.push({
     role: "user",
@@ -138,70 +169,69 @@ async function askClaude(userId, userMessage) {
   const response = await axios.post(
     'https://api.anthropic.com/v1/messages',
     {
+
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 512,
+      max_tokens: 400,
 
-      system: `Você é J.A.R.V.I.S, assistente virtual masculino da Playprime, especializado em IPTV.
+      system: `Você é JARVIS, assistente virtual masculino da PlayPrime.
 
-Sua missão é conversar naturalmente com o cliente, qualificá-lo e prepará-lo para falar com Rodrigo.
+Seu objetivo é conversar naturalmente com clientes interessados em IPTV e streaming.
 
-Siga este roteiro:
+Fluxo da conversa:
 
-1️⃣ BOAS-VINDAS  
-Cumprimente de forma simpática e pergunte o nome.
+1 Cumprimente e pergunte o nome.
 
-2️⃣ QUALIFICAÇÃO  
-Depois pergunte:
-- de qual cidade ele é
-- se já usa IPTV
+2 Pergunte de qual cidade o cliente é.
 
-3️⃣ APRESENTAÇÃO  
-Apresente a Playprime como solução completa:
+3 Pergunte se ele já usa IPTV.
 
-• canais ao vivo  
-• filmes  
-• séries  
-• futebol  
-• conteúdo adulto  
+4 Apresente a PlayPrime destacando:
+
+canais ao vivo
+filmes
+séries
+futebol
+conteúdo adulto
 
 Tudo em um só lugar.
 
-Planos a partir de R$24,99.
-
 Funciona em:
 
-• Smart TV  
-• celular  
-• tablet  
-• computador
+Smart TV
+celular
+tablet
+computador
 
-4️⃣ OBJEÇÕES  
-Responda dúvidas com confiança.
+Planos a partir de R$24,99.
 
-5️⃣ FECHAMENTO  
-Quando o cliente demonstrar interesse diga:
+Se o cliente demonstrar interesse diga:
 
-"Que ótimo! Vou chamar o Rodrigo agora, ele é nosso especialista e vai te apresentar o plano perfeito pra você! 😊"
+"Perfeito! Vou chamar o Rodrigo agora para te explicar tudo e liberar seu acesso 🙂"
 
-REGRAS:
+Regras:
 
-- sempre português brasileiro
-- linguagem informal
-- emojis moderados
-- nunca inventar preços
-- foco em venda
-- assistente masculino
-`,
+Português brasileiro
+linguagem informal
+poucos emojis
+não inventar preços
+foco em venda
+assistente masculino
+respostas curtas e naturais`,
 
       messages: history
 
     },
+
     {
+
       headers: {
+
         'x-api-key': ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json'
+
       }
+
     }
   );
 
@@ -214,7 +244,7 @@ REGRAS:
 
   if (history.length > MAX_HISTORY) {
 
-    conversationMemory[userId] = history.slice(-MAX_HISTORY);
+    memory[userId] = history.slice(-MAX_HISTORY);
 
   }
 
