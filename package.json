@@ -1,14 +1,13 @@
 {
   "name": "playprime-bot",
   "version": "1.0.0",
-  "description": "Bot WhatsApp PlayPrime com Claude e memória",
+  "description": "Bot WhatsApp PlayPrime",
   "main": "playprime-bot.js",
-  "type": "module",
   "scripts": {
     "start": "node playprime-bot.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
+    "axios": "^1.6.7",
     "express": "^4.18.2",
     "mongodb": "^6.5.0"
   }
