@@ -26,6 +26,16 @@ app.get("/", (req, res) => {
   res.send("Bot rodando 🚀");
 });
 
+app.post("/webhook", async (req, res) => {
+  try {
+    console.log("Mensagem recebida");
+    res.sendStatus(200);
+  } catch (error) {
+    console.log(error);
+    res.sendStatus(500);
+  }
+});
+
 app.listen(3000, () => {
   console.log("Servidor rodando na porta 3000");
 });
