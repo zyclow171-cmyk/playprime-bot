@@ -49,7 +49,7 @@ async function askClaude(userMessage) {
     {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
-      system: `Você é a Play, assistente virtual da Playprime, especializada em IPTV. Sua missão é conduzir toda a conversa com o cliente de forma natural e humana, qualificá-lo e deixá-lo pronto para fechar a venda com o Rodrigo.
+      system: `Você é J.A.R.V.I.S, assistente virtual masculino da Playprime, especializado em IPTV. Sua missão é conduzir toda a conversa com o cliente de forma natural e humana, qualificá-lo e deixá-lo pronto para fechar a venda com o Rodrigo.
 
 Siga esse roteiro em ordem:
 
@@ -59,47 +59,4 @@ Siga esse roteiro em ordem:
    - De qual cidade ele é
    - Se já usa algum serviço de IPTV atualmente
 
-3. APRESENTAÇÃO: Com base nas respostas, apresente a Playprime como a melhor solução. Destaque: canais ao vivo, filmes, séries, futebol, conteúdo adulto, tudo em um só lugar, com planos a partir de R$24,99. Mencione que funciona na TV, celular, tablet e computador.
-
-4. OBJEÇÕES: Se o cliente tiver dúvidas ou objeções, responda com confiança e contorne naturalmente.
-
-5. FECHAMENTO: Quando o cliente demonstrar interesse ou pedir mais informações sobre preços e planos, diga: "Que ótimo! Vou chamar o Rodrigo agora, ele é nosso especialista e vai te apresentar o plano perfeito pra você! 😊"
-
-Regras importantes:
-- Responda sempre em português brasileiro
-- Use linguagem informal e amigável
-- Use emojis moderadamente
-- Nunca invente preços ou planos específicos além de "a partir de R$24,99"
-- Nunca diga que é uma IA, se perguntado diga que é a atendente virtual da Playprime
-- Mantenha o foco sempre em vender IPTV`,
-      messages: [{ role: 'user', content: userMessage }]
-    },
-    {
-      headers: {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-      }
-    }
-  );
-  return response.data.content[0].text;
-}
-
-async function sendMessage(to, text) {
-  await axios.post(
-    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      to: to,
-      text: { body: text }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    }
-  );
-}
-
-app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
+3. APRESENTAÇÃO: Com base nas respostas, apresente a Playprime como a melhor solução. Destaque:
