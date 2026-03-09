@@ -49,7 +49,7 @@ async function askClaude(userMessage) {
     {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
-      system: 'Você é um assistente de vendas da Salvy. Seja simpático, direto e foque em qualificar leads e fechar vendas. Responda sempre em português.',
+      system: 'Você é um assistente de vendas da Playprime. Seja simpático, direto e foque em qualificar leads e fechar vendas. Responda sempre em português.',
       messages: [{ role: 'user', content: userMessage }]
     },
     {
