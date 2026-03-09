@@ -13,10 +13,15 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PORT = process.env.PORT || 3000;
 
+// MEMÓRIA DAS CONVERSAS
+const conversationMemory = {};
+const MAX_HISTORY = 10;
+
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
+
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
     res.status(200).send(challenge);
   } else {
@@ -25,9 +30,13 @@ app.get('/webhook', (req, res) => {
 });
 
 app.post('/webhook', async (req, res) => {
+
   res.sendStatus(200);
+
   const body = req.body;
+
   if (body.object === 'whatsapp_business_account') {
+
     const entry = body.entry?.[0];
     const changes = entry?.changes?.[0];
     const message = changes?.value?.messages?.[0];
@@ -38,33 +47,49 @@ app.post('/webhook', async (req, res) => {
     let text = '';
 
     try {
+
       await sendMessage(from, '⏳ Aguarde um momento...');
 
       if (message.type === 'text') {
+
         text = message.text.body;
+
       } else if (message.type === 'audio') {
+
         const audioId = message.audio.id;
         text = await transcribeAudio(audioId);
+
       } else {
+
         await sendMessage(from, 'Por enquanto só consigo responder texto e áudio! 😊');
         return;
+
       }
 
-      const reply = await askClaude(text);
+      const reply = await askClaude(from, text);
+
       await sendMessage(from, reply);
+
     } catch (err) {
+
       console.error('Erro:', err.message);
-      await sendMessage(from, 'Opa, tive um probleminha técnico! Tenta de novo em um instante.');
+      await sendMessage(from, 'Opa, tive um probleminha técnico! Tenta novamente em um instante.');
+
     }
+
   }
+
 });
 
 async function transcribeAudio(audioId) {
-  // Baixar o áudio do WhatsApp
+
   const mediaRes = await axios.get(
     `https://graph.facebook.com/v18.0/${audioId}`,
-    { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
+    {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+    }
   );
+
   const audioUrl = mediaRes.data.url;
 
   const audioBuffer = await axios.get(audioUrl, {
@@ -72,9 +97,13 @@ async function transcribeAudio(audioId) {
     responseType: 'arraybuffer'
   });
 
-  // Enviar para o Whisper
   const form = new FormData();
-  form.append('file', Buffer.from(audioBuffer.data), { filename: 'audio.ogg', contentType: 'audio/ogg' });
+
+  form.append('file', Buffer.from(audioBuffer.data), {
+    filename: 'audio.ogg',
+    contentType: 'audio/ogg'
+  });
+
   form.append('model', 'whisper-1');
   form.append('language', 'pt');
 
@@ -90,39 +119,82 @@ async function transcribeAudio(audioId) {
   );
 
   return whisperRes.data.text;
+
 }
 
-async function askClaude(userMessage) {
+async function askClaude(userId, userMessage) {
+
+  if (!conversationMemory[userId]) {
+    conversationMemory[userId] = [];
+  }
+
+  const history = conversationMemory[userId];
+
+  history.push({
+    role: "user",
+    content: userMessage
+  });
+
   const response = await axios.post(
     'https://api.anthropic.com/v1/messages',
     {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
-      system: `Você é J.A.R.V.I.S, assistente virtual masculino da Playprime, especializado em IPTV. Sua missão é conduzir toda a conversa com o cliente de forma natural e humana, qualificá-lo e deixá-lo pronto para fechar a venda com o Rodrigo.
 
-Siga esse roteiro em ordem:
+      system: `Você é J.A.R.V.I.S, assistente virtual masculino da Playprime, especializado em IPTV.
 
-1. BOAS-VINDAS: Cumprimente o cliente de forma simpático e pergunte o nome dele.
+Sua missão é conversar naturalmente com o cliente, qualificá-lo e prepará-lo para falar com Rodrigo.
 
-2. QUALIFICAÇÃO: Após saber o nome, pergunte:
-   - De qual cidade ele é
-   - Se já usa algum serviço de IPTV atualmente
+Siga este roteiro:
 
-3. APRESENTAÇÃO: Com base nas respostas, apresente a Playprime como a melhor solução. Destaque: canais ao vivo, filmes, séries, futebol, conteúdo adulto, tudo em um só lugar, com planos a partir de R$24,99. Mencione que funciona na TV, celular, tablet e computador.
+1️⃣ BOAS-VINDAS  
+Cumprimente de forma simpática e pergunte o nome.
 
-4. OBJEÇÕES: Se o cliente tiver dúvidas ou objeções, responda com confiança e contorne naturalmente.
+2️⃣ QUALIFICAÇÃO  
+Depois pergunte:
+- de qual cidade ele é
+- se já usa IPTV
 
-5. FECHAMENTO: Quando o cliente demonstrar interesse ou pedir mais informações sobre preços e planos, diga: "Que ótimo! Vou chamar o Rodrigo agora, ele é nosso especialista e vai te apresentar o plano perfeito pra você! 😊"
+3️⃣ APRESENTAÇÃO  
+Apresente a Playprime como solução completa:
 
-Regras importantes:
-- Responda sempre em português brasileiro
-- Use linguagem informal e amigável
-- Use emojis moderadamente
-- Nunca invente preços ou planos específicos além de "a partir de R$24,99"
-- Se perguntado se é uma IA, diga que é o assistente virtual da Playprime
-- Mantenha o foco sempre em vender IPTV
-- Seja sempre masculino em suas respostas`,
-      messages: [{ role: 'user', content: userMessage }]
+• canais ao vivo  
+• filmes  
+• séries  
+• futebol  
+• conteúdo adulto  
+
+Tudo em um só lugar.
+
+Planos a partir de R$24,99.
+
+Funciona em:
+
+• Smart TV  
+• celular  
+• tablet  
+• computador
+
+4️⃣ OBJEÇÕES  
+Responda dúvidas com confiança.
+
+5️⃣ FECHAMENTO  
+Quando o cliente demonstrar interesse diga:
+
+"Que ótimo! Vou chamar o Rodrigo agora, ele é nosso especialista e vai te apresentar o plano perfeito pra você! 😊"
+
+REGRAS:
+
+- sempre português brasileiro
+- linguagem informal
+- emojis moderados
+- nunca inventar preços
+- foco em venda
+- assistente masculino
+`,
+
+      messages: history
+
     },
     {
       headers: {
@@ -132,10 +204,26 @@ Regras importantes:
       }
     }
   );
-  return response.data.content[0].text;
+
+  const reply = response.data.content[0].text;
+
+  history.push({
+    role: "assistant",
+    content: reply
+  });
+
+  if (history.length > MAX_HISTORY) {
+
+    conversationMemory[userId] = history.slice(-MAX_HISTORY);
+
+  }
+
+  return reply;
+
 }
 
 async function sendMessage(to, text) {
+
   await axios.post(
     `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
     {
@@ -150,6 +238,7 @@ async function sendMessage(to, text) {
       }
     }
   );
+
 }
 
 app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
