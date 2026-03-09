@@ -33,6 +33,7 @@ app.post('/webhook', async (req, res) => {
       const from = message.from;
       const text = message.text.body;
       try {
+        await sendMessage(from, '⏳ Aguarde um momento...');
         const reply = await askClaude(text);
         await sendMessage(from, reply);
       } catch (err) {
@@ -48,7 +49,7 @@ async function askClaude(userMessage) {
     'https://api.anthropic.com/v1/messages',
     {
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
+      max_tokens: 512,
       system: `Você é J.A.R.V.I.S, assistente virtual masculino da Playprime, especializado em IPTV. Sua missão é conduzir toda a conversa com o cliente de forma natural e humana, qualificá-lo e deixá-lo pronto para fechar a venda com o Rodrigo.
 
 Siga esse roteiro em ordem:
@@ -59,4 +60,48 @@ Siga esse roteiro em ordem:
    - De qual cidade ele é
    - Se já usa algum serviço de IPTV atualmente
 
-3. APRESENTAÇÃO: Com base nas respostas, apresente a Playprime como a melhor solução. Destaque:
+3. APRESENTAÇÃO: Com base nas respostas, apresente a Playprime como a melhor solução. Destaque: canais ao vivo, filmes, séries, futebol, conteúdo adulto, tudo em um só lugar, com planos a partir de R$24,99. Mencione que funciona na TV, celular, tablet e computador.
+
+4. OBJEÇÕES: Se o cliente tiver dúvidas ou objeções, responda com confiança e contorne naturalmente.
+
+5. FECHAMENTO: Quando o cliente demonstrar interesse ou pedir mais informações sobre preços e planos, diga: "Que ótimo! Vou chamar o Rodrigo agora, ele é nosso especialista e vai te apresentar o plano perfeito pra você! 😊"
+
+Regras importantes:
+- Responda sempre em português brasileiro
+- Use linguagem informal e amigável
+- Use emojis moderadamente
+- Nunca invente preços ou planos específicos além de "a partir de R$24,99"
+- Se perguntado se é uma IA, diga que é o assistente virtual da Playprime
+- Mantenha o foco sempre em vender IPTV
+- Seja sempre masculino em suas respostas`,
+      messages: [{ role: 'user', content: userMessage }]
+    },
+    {
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      }
+    }
+  );
+  return response.data.content[0].text;
+}
+
+async function sendMessage(to, text) {
+  await axios.post(
+    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: 'whatsapp',
+      to: to,
+      text: { body: text }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+}
+
+app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
