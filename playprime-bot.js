@@ -54,3 +54,30 @@ async function askClaude(userMessage) {
     },
     {
       headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      }
+    }
+  );
+  return response.data.content[0].text;
+}
+
+async function sendMessage(to, text) {
+  await axios.post(
+    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: 'whatsapp',
+      to: to,
+      text: { body: text }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+}
+
+app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
