@@ -7,7 +7,7 @@ app.use(express.json());
 
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const ANTHROPIC_API_KEY = 'COLE_SUA_CHAVE_AQUI';
+const ANTHROPIC_API_KEY = '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';
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PORT = process.env.PORT || 3000;
 
