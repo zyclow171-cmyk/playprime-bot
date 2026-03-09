@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const FormData = require('form-data');
 
 const app = express();
 app.use(express.json());
@@ -8,6 +9,7 @@ app.use(express.json());
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PORT = process.env.PORT || 3000;
 
@@ -29,20 +31,66 @@ app.post('/webhook', async (req, res) => {
     const entry = body.entry?.[0];
     const changes = entry?.changes?.[0];
     const message = changes?.value?.messages?.[0];
-    if (message?.type === 'text') {
-      const from = message.from;
-      const text = message.text.body;
-      try {
-        await sendMessage(from, '⏳ Aguarde um momento...');
-        const reply = await askClaude(text);
-        await sendMessage(from, reply);
-      } catch (err) {
-        console.error('Erro:', err.message);
-        await sendMessage(from, 'Opa, tive um probleminha técnico! Tenta de novo em um instante.');
+
+    if (!message) return;
+
+    const from = message.from;
+    let text = '';
+
+    try {
+      await sendMessage(from, '⏳ Aguarde um momento...');
+
+      if (message.type === 'text') {
+        text = message.text.body;
+      } else if (message.type === 'audio') {
+        const audioId = message.audio.id;
+        text = await transcribeAudio(audioId);
+      } else {
+        await sendMessage(from, 'Por enquanto só consigo responder texto e áudio! 😊');
+        return;
       }
+
+      const reply = await askClaude(text);
+      await sendMessage(from, reply);
+    } catch (err) {
+      console.error('Erro:', err.message);
+      await sendMessage(from, 'Opa, tive um probleminha técnico! Tenta de novo em um instante.');
     }
   }
 });
+
+async function transcribeAudio(audioId) {
+  // Baixar o áudio do WhatsApp
+  const mediaRes = await axios.get(
+    `https://graph.facebook.com/v18.0/${audioId}`,
+    { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
+  );
+  const audioUrl = mediaRes.data.url;
+
+  const audioBuffer = await axios.get(audioUrl, {
+    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+    responseType: 'arraybuffer'
+  });
+
+  // Enviar para o Whisper
+  const form = new FormData();
+  form.append('file', Buffer.from(audioBuffer.data), { filename: 'audio.ogg', contentType: 'audio/ogg' });
+  form.append('model', 'whisper-1');
+  form.append('language', 'pt');
+
+  const whisperRes = await axios.post(
+    'https://api.openai.com/v1/audio/transcriptions',
+    form,
+    {
+      headers: {
+        ...form.getHeaders(),
+        Authorization: `Bearer ${OPENAI_API_KEY}`
+      }
+    }
+  );
+
+  return whisperRes.data.text;
+}
 
 async function askClaude(userMessage) {
   const response = await axios.post(
@@ -54,7 +102,7 @@ async function askClaude(userMessage) {
 
 Siga esse roteiro em ordem:
 
-1. BOAS-VINDAS: Cumprimente o cliente de forma simpática e pergunte o nome dele.
+1. BOAS-VINDAS: Cumprimente o cliente de forma simpático e pergunte o nome dele.
 
 2. QUALIFICAÇÃO: Após saber o nome, pergunte:
    - De qual cidade ele é
