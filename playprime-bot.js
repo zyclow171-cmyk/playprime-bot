@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const FormData = require('form-data');
+const fs = require('fs');
 
 const app = express();
 app.use(express.json());
@@ -13,8 +14,24 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const PORT = process.env.PORT || 3000;
 
-// Memória de histórico por cliente
-const conversationHistory = {};
+const HISTORY_FILE = '/tmp/history.json';
+
+function loadHistory() {
+  try {
+    if (fs.existsSync(HISTORY_FILE)) {
+      return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+}
+
+function saveHistory(history) {
+  try {
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history));
+  } catch (e) {}
+}
+
+const conversationHistory = loadHistory();
 
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -41,15 +58,13 @@ app.post('/webhook', async (req, res) => {
     let text = '';
 
     try {
-      await sendMessage(from, '⏳ Aguarde um momento...');
-
       if (message.type === 'text') {
         text = message.text.body;
       } else if (message.type === 'audio') {
         const audioId = message.audio.id;
         text = await transcribeAudio(audioId);
       } else {
-       
+        await sendMessage(from, 'Por enquanto só consigo responder texto e áudio! 😊');
         return;
       }
 
@@ -94,18 +109,12 @@ async function transcribeAudio(audioId) {
 }
 
 async function askClaude(from, userMessage) {
-  // Inicializa histórico se não existir
   if (!conversationHistory[from]) {
     conversationHistory[from] = [];
   }
 
-  // Adiciona mensagem do usuário ao histórico
-  conversationHistory[from].push({
-    role: 'user',
-    content: userMessage
-  });
+  conversationHistory[from].push({ role: 'user', content: userMessage });
 
-  // Limita histórico a 20 mensagens para não estourar tokens
   if (conversationHistory[from].length > 20) {
     conversationHistory[from] = conversationHistory[from].slice(-20);
   }
@@ -121,7 +130,7 @@ Siga esse roteiro em ordem:
 
 1. BOAS-VINDAS: Na primeira mensagem, cumprimente o cliente de forma simpático e pergunte o nome dele. Nas mensagens seguintes, já sabe o nome dele, não pergunte de novo.
 
-2. QUALIFICAÇÃO: Após saber o nome, pergunte:
+2. QUALIFICAÇÃO: Após saber o nome, pergunte UMA coisa por vez:
    - De qual cidade ele é
    - Se já usa algum serviço de IPTV atualmente
 
@@ -139,7 +148,8 @@ Regras importantes:
 - Se perguntado se é uma IA, diga que é o assistente virtual da Playprime
 - Mantenha o foco sempre em vender IPTV
 - Seja sempre masculino em suas respostas
-- NUNCA repita perguntas que já foram feitas anteriormente na conversa`,
+- NUNCA repita perguntas já feitas anteriormente na conversa
+- Lembre sempre do contexto anterior da conversa`,
       messages: conversationHistory[from]
     },
     {
@@ -152,12 +162,8 @@ Regras importantes:
   );
 
   const reply = response.data.content[0].text;
-
-  // Adiciona resposta ao histórico
-  conversationHistory[from].push({
-    role: 'assistant',
-    content: reply
-  });
+  conversationHistory[from].push({ role: 'assistant', content: reply });
+  saveHistory(conversationHistory);
 
   return reply;
 }
