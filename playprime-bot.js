@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const FormData = require('form-data');
-const fs = require('fs');
+const redis = require('redis');
 
 const app = express();
 app.use(express.json());
@@ -12,26 +12,15 @@ const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+const REDIS_URL = process.env.REDIS_URL;
 const PORT = process.env.PORT || 3000;
 
-const HISTORY_FILE = '/tmp/history.json';
+const LOGO_URL = 'https://drive.google.com/uc?id=1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
+const TABELA_URL = 'https://drive.google.com/uc?id=1rJZRnDEaGo4xyzeouCvygf5tMMaWYrME';
+const MASCOTES_URL = 'https://drive.google.com/uc?id=1OqF9Tt6yquEsjgU6m2bOlrgo9s3d39mE';
 
-function loadHistory() {
-  try {
-    if (fs.existsSync(HISTORY_FILE)) {
-      return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
-    }
-  } catch (e) {}
-  return {};
-}
-
-function saveHistory(history) {
-  try {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(history));
-  } catch (e) {}
-}
-
-const conversationHistory = loadHistory();
+const redisClient = redis.createClient({ url: REDIS_URL });
+redisClient.connect().catch(console.error);
 
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -61,18 +50,45 @@ app.post('/webhook', async (req, res) => {
       if (message.type === 'text') {
         text = message.text.body;
       } else if (message.type === 'audio') {
-        const audioId = message.audio.id;
-        text = await transcribeAudio(audioId);
+        text = await transcribeAudio(message.audio.id);
       } else {
-        await sendMessage(from, 'Por enquanto só consigo responder texto e áudio! 😊');
+        await sendMessage(from, 'Por enquanto só respondo texto e áudio! 😊');
         return;
       }
 
-      const reply = await askClaude(from, text);
-      await sendMessage(from, reply);
+      // Verifica se é primeira mensagem
+      let history = [];
+      try {
+        const stored = await redisClient.get(`chat:${from}`);
+        if (stored) history = JSON.parse(stored);
+      } catch (e) {}
+
+      const isFirstMessage = history.length === 0;
+
+      // Envia logo na boas-vindas
+      if (isFirstMessage) {
+        await sendImage(from, LOGO_URL, '🎉 Bem-vindo à Playprime!');
+      }
+
+      const result = await askClaude(from, text, history);
+
+      // Verifica se deve enviar tabela ou mascotes
+      const textLower = text.toLowerCase();
+      const replyLower = result.reply.toLowerCase();
+
+      if (textLower.includes('preço') || textLower.includes('valor') || textLower.includes('quanto') || textLower.includes('plano')) {
+        await sendImage(from, TABELA_URL, '📋 Tabela de Preços Playprime');
+      }
+
+      if (replyLower.includes('rodrigo')) {
+        await sendImage(from, MASCOTES_URL, '👽 Nossa equipe vai te atender agora!');
+      }
+
+      await sendMessage(from, result.reply);
+
     } catch (err) {
       console.error('Erro:', err.message);
-      await sendMessage(from, 'Opa, tive um probleminha técnico! Tenta de novo em um instante.');
+      await sendMessage(from, 'Tive um probleminha técnico! Tenta de novo. 😅');
     }
   }
 });
@@ -82,9 +98,8 @@ async function transcribeAudio(audioId) {
     `https://graph.facebook.com/v18.0/${audioId}`,
     { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
   );
-  const audioUrl = mediaRes.data.url;
 
-  const audioBuffer = await axios.get(audioUrl, {
+  const audioBuffer = await axios.get(mediaRes.data.url, {
     headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
     responseType: 'arraybuffer'
   });
@@ -97,60 +112,52 @@ async function transcribeAudio(audioId) {
   const whisperRes = await axios.post(
     'https://api.openai.com/v1/audio/transcriptions',
     form,
-    {
-      headers: {
-        ...form.getHeaders(),
-        Authorization: `Bearer ${OPENAI_API_KEY}`
-      }
-    }
+    { headers: { ...form.getHeaders(), Authorization: `Bearer ${OPENAI_API_KEY}` } }
   );
 
   return whisperRes.data.text;
 }
 
-async function askClaude(from, userMessage) {
-  if (!conversationHistory[from]) {
-    conversationHistory[from] = [];
-  }
+async function askClaude(from, userMessage, history) {
+  history.push({ role: 'user', content: userMessage });
 
-  conversationHistory[from].push({ role: 'user', content: userMessage });
-
-  if (conversationHistory[from].length > 20) {
-    conversationHistory[from] = conversationHistory[from].slice(-20);
-  }
+  if (history.length > 20) history = history.slice(-20);
 
   const response = await axios.post(
     'https://api.anthropic.com/v1/messages',
     {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
-      system: `Você é J.A.R.V.I.S, assistente virtual masculino da Playprime, especializado em IPTV. Sua missão é conduzir toda a conversa com o cliente de forma natural e humana, qualificá-lo e deixá-lo pronto para fechar a venda com o Rodrigo.
+      system: `Você é J.A.R.V.I.S, assistente virtual masculino da Playprime, especializado em IPTV. Seja direto, simpático e objetivo. Mensagens CURTAS — máximo 3 linhas.
 
-Siga esse roteiro em ordem:
+ROTEIRO:
+1. Primeira mensagem: cumprimente e pergunte o nome. Depois que souber o nome, NUNCA mais pergunte.
+2. Pergunte a cidade e se já usa IPTV. Uma pergunta por vez.
+3. Apresente a Playprime: +15.000 conteúdos, Full HD/4K, sem fidelidade, suporte online. TV, celular, tablet e PC.
 
-1. BOAS-VINDAS: Na primeira mensagem, cumprimente o cliente de forma simpático e pergunte o nome dele. Nas mensagens seguintes, já sabe o nome dele, não pergunte de novo.
+SERVIDORES E PREÇOS:
 
-2. QUALIFICAÇÃO: Após saber o nome, pergunte UMA coisa por vez:
-   - De qual cidade ele é
-   - Se já usa algum serviço de IPTV atualmente
+🔵 Slim TV (mais em conta):
+- 1 mês: R$24,90 | 3 meses: R$49,90 | 6 meses: R$94,90 | 12 meses: R$149,90
+- Site: https://slimtv.fun/#inicio
 
-3. APRESENTAÇÃO: Com base nas respostas, apresente a Playprime como a melhor solução. Destaque: canais ao vivo, filmes, séries, futebol, conteúdo adulto, tudo em um só lugar, com planos a partir de R$24,99. Mencione que funciona na TV, celular, tablet e computador.
+🟣 Outros servidores (Unitv, Uniplay, Wares, Space Play, Fast, Fire, Now, New TVS):
+- 1 tela: R$30/mês | R$50/bimestral | R$90/trimestral
+- 2 telas: R$50/mês
+- 3 telas: R$70/mês
+- Preços revendedor: consultar Rodrigo
 
-4. OBJEÇÕES: Se o cliente tiver dúvidas ou objeções, responda com confiança e contorne naturalmente.
+FECHAMENTO: Quando cliente quiser comprar, diga: "Ótimo! Vou chamar o Rodrigo agora pra te ajudar a fechar! 😊" — use a palavra RODRIGO para acionar o atendimento.
 
-5. FECHAMENTO: Quando o cliente demonstrar interesse ou pedir mais informações sobre preços e planos, diga: "Que ótimo! Vou chamar o Rodrigo agora, ele é nosso especialista e vai te apresentar o plano perfeito pra você! 😊"
-
-Regras importantes:
-- Responda sempre em português brasileiro
-- Use linguagem informal e amigável
-- Use emojis moderadamente
-- Nunca invente preços ou planos específicos além de "a partir de R$24,99"
-- Se perguntado se é uma IA, diga que é o assistente virtual da Playprime
-- Mantenha o foco sempre em vender IPTV
-- Seja sempre masculino em suas respostas
-- NUNCA repita perguntas já feitas anteriormente na conversa
-- Lembre sempre do contexto anterior da conversa`,
-      messages: conversationHistory[from]
+REGRAS:
+- Português informal
+- Máximo 3 linhas por resposta
+- Emojis moderados
+- Nunca invente preços fora da tabela
+- Se perguntado se é IA, diga que é o assistente virtual da Playprime
+- NUNCA repita perguntas já feitas
+- Foco total em vender IPTV`,
+      messages: history
     },
     {
       headers: {
@@ -162,10 +169,34 @@ Regras importantes:
   );
 
   const reply = response.data.content[0].text;
-  conversationHistory[from].push({ role: 'assistant', content: reply });
-  saveHistory(conversationHistory);
+  history.push({ role: 'assistant', content: reply });
 
-  return reply;
+  try {
+    await redisClient.setEx(`chat:${from}`, 604800, JSON.stringify(history));
+  } catch (e) {}
+
+  return { reply, history };
+}
+
+async function sendImage(to, imageUrl, caption) {
+  await axios.post(
+    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: 'whatsapp',
+      to: to,
+      type: 'image',
+      image: {
+        link: imageUrl,
+        caption: caption
+      }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
 }
 
 async function sendMessage(to, text) {
