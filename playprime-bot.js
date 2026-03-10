@@ -49,7 +49,7 @@ app.post('/webhook', async (req, res) => {
         const audioId = message.audio.id;
         text = await transcribeAudio(audioId);
       } else {
-        await sendMessage(from, 'Por enquanto só consigo responder texto e áudio! 😊');
+       
         return;
       }
 
