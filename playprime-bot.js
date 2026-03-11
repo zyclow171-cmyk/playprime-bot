@@ -16,7 +16,6 @@ const REDIS_URL = process.env.REDIS_URL;
 const PORT = process.env.PORT || 3000;
 
 const LOGO_URL = 'https://drive.google.com/uc?id=1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
-const TABELA_URL = 'https://drive.google.com/uc?id=1rJZRnDEaGo4xyzeouCvygf5tMMaWYrME';
 const MASCOTES_URL = 'https://drive.google.com/uc?id=1OqF9Tt6yquEsjgU6m2bOlrgo9s3d39mE';
 
 const redisClient = redis.createClient({ url: REDIS_URL });
@@ -72,13 +71,8 @@ app.post('/webhook', async (req, res) => {
 
       const result = await askClaude(from, text, history);
 
-      // Verifica se deve enviar tabela ou mascotes
-      const textLower = text.toLowerCase();
+      // Verifica se deve enviar mascotes (acionar Rodrigo)
       const replyLower = result.reply.toLowerCase();
-
-      if (textLower.includes('preço') || textLower.includes('valor') || textLower.includes('quanto') || textLower.includes('plano')) {
-        await sendImage(from, TABELA_URL, '📋 Tabela de Preços Playprime');
-      }
 
       if (replyLower.includes('rodrigo')) {
         await sendImage(from, MASCOTES_URL, '👽 Nossa equipe vai te atender agora!');
