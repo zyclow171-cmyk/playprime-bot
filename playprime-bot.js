@@ -132,7 +132,7 @@ SERVIDORES E PREÇOS:
 - 1 mês: R$24,90 | 3 meses: R$49,90 | 6 meses: R$94,90 | 12 meses: R$149,90
 - Site: https://slimtv.fun/#inicio
 
-🟣 Outros servidores (Unitv, Uniplay, Wares, Space Play, Fast, Fire, Now, New TVS):
+🟣 Outros servidores (Unitv, Uniplay, Warez, Space Play, Fast, Fire, Now, New TVS):
 - 1 tela: R$30/mês | R$50/bimestral | R$90/trimestral
 - 2 telas: R$50/mês
 - 3 telas: R$70/mês
