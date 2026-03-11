@@ -3,9 +3,16 @@ const express = require('express');
 const axios = require('axios');
 const FormData = require('form-data');
 const redis = require('redis');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
+
+// Serve a landing page
+app.use(express.static(__dirname));
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
@@ -15,11 +22,16 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const REDIS_URL = process.env.REDIS_URL;
 const PORT = process.env.PORT || 3000;
 
-const LOGO_URL = 'https://drive.google.com/uc?id=1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
-const TABELA_URL = 'https://drive.google.com/uc?id=1rJZRnDEaGo4xyzeouCvygf5tMMaWYrME';
-const MASCOTES_URL = 'https://drive.google.com/uc?id=1OqF9Tt6yquEsjgU6m2bOlrgo9s3d39mE';
+const MASCOTES_URL = 'https://lh3.googleusercontent.com/d/1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
 
-const redisClient = redis.createClient({ url: REDIS_URL });
+const redisClient = redis.createClient({
+  url: REDIS_URL,
+  socket: {
+    reconnectStrategy: (retries) => Math.min(retries * 100, 3000)
+  }
+});
+
+redisClient.on('error', (err) => console.log('Redis error:', err));
 redisClient.connect().catch(console.error);
 
 app.get('/webhook', (req, res) => {
@@ -56,7 +68,6 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-      // Verifica se é primeira mensagem
       let history = [];
       try {
         const stored = await redisClient.get(`chat:${from}`);
@@ -65,211 +76,13 @@ app.post('/webhook', async (req, res) => {
 
       const isFirstMessage = history.length === 0;
 
-      // Envia logo na boas-vindas
       if (isFirstMessage) {
-        await sendImage(from, LOGO_URL, '🎉 Bem-vindo à Playprime!');
+        await sendImage(from, MASCOTES_URL, '🎉 Bem-vindo à Playprime!');
       }
 
       const result = await askClaude(from, text, history);
-
-      // Verifica se deve enviar tabela ou mascotes
-      const textLower = text.toLowerCase();
-      const replyLower = result.reply.toLowerCase();
-
-      if (textLower.includes('preço') || textLower.includes('valor') || textLower.includes('quanto') || textLower.includes('plano')) {
-        await sendImage(from, TABELA_URL, '📋 Tabela de Preços Playprime');
-      }
-
-      if (replyLower.includes('rodrigo')) {
-        await sendImage(from, MASCOTES_URL, '👽 Nossa equipe vai te atender agora!');
-      }
-
       await sendMessage(from, result.reply);
 
     } catch (err) {
       console.error('Erro:', err.message);
-      await sendMessage(from, 'Tive um probleminha técnico! Tenta de novo. 😅');
-    }
-  }
-});
-
-// ─── ROTA DO DASHBOARD ────────────────────────────────────────────────────────
-
-app.get('/dashboard/data', async (req, res) => {
-  try {
-    const keys = await redisClient.keys('chat:*');
-    const conversations = [];
-
-    for (const key of keys) {
-      const stored = await redisClient.get(key);
-      if (stored) {
-        const history = JSON.parse(stored);
-        const phone = key.replace('chat:', '');
-
-        const lastMsg = history[history.length - 1];
-        const rodrigoTriggered = history.some(m =>
-          m.content?.toLowerCase().includes('rodrigo')
-        );
-
-        // Tenta extrair o nome do cliente do histórico
-        let name = `+${phone}`;
-        for (let i = 0; i < history.length; i++) {
-          if (history[i].role === 'assistant' && history[i].content?.toLowerCase().includes('oi ')) {
-            const match = history[i].content.match(/[Oo]i\s+([A-Z][a-z]+)/);
-            if (match) { name = match[1]; break; }
-          }
-        }
-
-        conversations.push({
-          id: phone,
-          phone: `+${phone}`,
-          name,
-          messages: history,
-          lastMessage: lastMsg?.content?.slice(0, 60) || '',
-          rodrigoTriggered,
-          totalMessages: history.length,
-          unread: 0,
-        });
-      }
-    }
-
-    // Ordena por mais recente (mais mensagens = mais ativo)
-    conversations.sort((a, b) => b.totalMessages - a.totalMessages);
-
-    res.json({
-      conversations,
-      total: conversations.length,
-      rodrigoCount: conversations.filter(c => c.rodrigoTriggered).length,
-    });
-  } catch (err) {
-    console.error('Erro dashboard:', err.message);
-    res.json({ conversations: [], total: 0, rodrigoCount: 0 });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function transcribeAudio(audioId) {
-  const mediaRes = await axios.get(
-    `https://graph.facebook.com/v18.0/${audioId}`,
-    { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
-  );
-
-  const audioBuffer = await axios.get(mediaRes.data.url, {
-    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
-    responseType: 'arraybuffer'
-  });
-
-  const form = new FormData();
-  form.append('file', Buffer.from(audioBuffer.data), { filename: 'audio.ogg', contentType: 'audio/ogg' });
-  form.append('model', 'whisper-1');
-  form.append('language', 'pt');
-
-  const whisperRes = await axios.post(
-    'https://api.openai.com/v1/audio/transcriptions',
-    form,
-    { headers: { ...form.getHeaders(), Authorization: `Bearer ${OPENAI_API_KEY}` } }
-  );
-
-  return whisperRes.data.text;
-}
-
-async function askClaude(from, userMessage, history) {
-  history.push({ role: 'user', content: userMessage });
-
-  if (history.length > 20) history = history.slice(-20);
-
-  const response = await axios.post(
-    'https://api.anthropic.com/v1/messages',
-    {
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 512,
-      system: `Você é J.A.R.V.I.S, assistente virtual masculino da Playprime, especializado em IPTV. Seja direto, simpático e objetivo. Mensagens CURTAS — máximo 3 linhas.
-
-ROTEIRO:
-1. Primeira mensagem: cumprimente e pergunte o nome. Depois que souber o nome, NUNCA mais pergunte.
-2. Pergunte a cidade e se já usa IPTV. Uma pergunta por vez.
-3. Apresente a Playprime: +15.000 conteúdos, Full HD/4K, sem fidelidade, suporte online. TV, celular, tablet e PC.
-
-SERVIDORES E PREÇOS:
-
-🔵 Slim TV (mais em conta):
-- 1 mês: R$24,90 | 3 meses: R$49,90 | 6 meses: R$94,90 | 12 meses: R$149,90
-- Site: https://slimtv.fun/#inicio
-
-🟣 Outros servidores (Unitv, Uniplay, Wares, Space Play, Fast, Fire, Now, New TVS):
-- 1 tela: R$30/mês | R$50/bimestral | R$90/trimestral
-- 2 telas: R$50/mês
-- 3 telas: R$70/mês
-- Preços revendedor: consultar Rodrigo
-
-FECHAMENTO: Quando cliente quiser comprar, diga: "Ótimo! Vou chamar o Rodrigo agora pra te ajudar a fechar! 😊" — use a palavra RODRIGO para acionar o atendimento.
-
-REGRAS:
-- Português informal
-- Máximo 3 linhas por resposta
-- Emojis moderados
-- Nunca invente preços fora da tabela
-- Se perguntado se é IA, diga que é o assistente virtual da Playprime
-- NUNCA repita perguntas já feitas
-- Foco total em vender IPTV`,
-      messages: history
-    },
-    {
-      headers: {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-      }
-    }
-  );
-
-  const reply = response.data.content[0].text;
-  history.push({ role: 'assistant', content: reply });
-
-  try {
-    await redisClient.setEx(`chat:${from}`, 604800, JSON.stringify(history));
-  } catch (e) {}
-
-  return { reply, history };
-}
-
-async function sendImage(to, imageUrl, caption) {
-  await axios.post(
-    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      to: to,
-      type: 'image',
-      image: {
-        link: imageUrl,
-        caption: caption
-      }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    }
-  );
-}
-
-async function sendMessage(to, text) {
-  await axios.post(
-    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      to: to,
-      text: { body: text }
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    }
-  );
-}
-
-app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
+      awai
