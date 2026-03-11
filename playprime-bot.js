@@ -15,10 +15,18 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const REDIS_URL = process.env.REDIS_URL;
 const PORT = process.env.PORT || 3000;
 
-const MASCOTES_URL = 'https://drive.google.com/uc?id=1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
-const LOGO_URL = 'https://drive.google.com/uc?id=1OqF9Tt6yquEsjgU6m2bOlrgo9s3d39mE';
+const MASCOTES_URL = 'https://lh3.googleusercontent.com/d/1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
+const LOGO_URL = 'https://lh3.googleusercontent.com/d/1OqF9Tt6yquEsjgU6m2bOlrgo9s3d39mE';
 
-const redisClient = redis.createClient({ url: REDIS_URL });
+const redisClient = redis.createClient({
+  url: REDIS_URL,
+  socket: {
+    tls: true,
+    rejectUnauthorized: false
+  }
+});
+
+redisClient.on('error', (err) => console.log('Redis error:', err));
 redisClient.connect().catch(console.error);
 
 app.get('/webhook', (req, res) => {
