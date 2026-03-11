@@ -15,16 +15,11 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const REDIS_URL = process.env.REDIS_URL;
 const PORT = process.env.PORT || 3000;
 
-const MASCOTES_URL = 'https://lh3.googleusercontent.com/d/1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
+const LOGO_URL = 'https://drive.google.com/uc?id=1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
+const TABELA_URL = 'https://drive.google.com/uc?id=1rJZRnDEaGo4xyzeouCvygf5tMMaWYrME';
+const MASCOTES_URL = 'https://drive.google.com/uc?id=1OqF9Tt6yquEsjgU6m2bOlrgo9s3d39mE';
 
-const redisClient = redis.createClient({
-  url: REDIS_URL,
-  socket: {
-    reconnectStrategy: (retries) => Math.min(retries * 100, 3000)
-  }
-});
-
-redisClient.on('error', (err) => console.log('Redis error:', err));
+const redisClient = redis.createClient({ url: REDIS_URL });
 redisClient.connect().catch(console.error);
 
 app.get('/webhook', (req, res) => {
@@ -61,6 +56,7 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
+      // Verifica se é primeira mensagem
       let history = [];
       try {
         const stored = await redisClient.get(`chat:${from}`);
@@ -69,11 +65,24 @@ app.post('/webhook', async (req, res) => {
 
       const isFirstMessage = history.length === 0;
 
+      // Envia logo na boas-vindas
       if (isFirstMessage) {
-        await sendImage(from, MASCOTES_URL, '🎉 Bem-vindo à Playprime!');
+        await sendImage(from, LOGO_URL, '🎉 Bem-vindo à Playprime!');
       }
 
       const result = await askClaude(from, text, history);
+
+      // Verifica se deve enviar tabela ou mascotes
+      const textLower = text.toLowerCase();
+      const replyLower = result.reply.toLowerCase();
+
+      if (textLower.includes('preço') || textLower.includes('valor') || textLower.includes('quanto') || textLower.includes('plano')) {
+        await sendImage(from, TABELA_URL, '📋 Tabela de Preços Playprime');
+      }
+
+      if (replyLower.includes('rodrigo')) {
+        await sendImage(from, MASCOTES_URL, '👽 Nossa equipe vai te atender agora!');
+      }
 
       await sendMessage(from, result.reply);
 
@@ -83,6 +92,62 @@ app.post('/webhook', async (req, res) => {
     }
   }
 });
+
+// ─── ROTA DO DASHBOARD ────────────────────────────────────────────────────────
+
+app.get('/dashboard/data', async (req, res) => {
+  try {
+    const keys = await redisClient.keys('chat:*');
+    const conversations = [];
+
+    for (const key of keys) {
+      const stored = await redisClient.get(key);
+      if (stored) {
+        const history = JSON.parse(stored);
+        const phone = key.replace('chat:', '');
+
+        const lastMsg = history[history.length - 1];
+        const rodrigoTriggered = history.some(m =>
+          m.content?.toLowerCase().includes('rodrigo')
+        );
+
+        // Tenta extrair o nome do cliente do histórico
+        let name = `+${phone}`;
+        for (let i = 0; i < history.length; i++) {
+          if (history[i].role === 'assistant' && history[i].content?.toLowerCase().includes('oi ')) {
+            const match = history[i].content.match(/[Oo]i\s+([A-Z][a-z]+)/);
+            if (match) { name = match[1]; break; }
+          }
+        }
+
+        conversations.push({
+          id: phone,
+          phone: `+${phone}`,
+          name,
+          messages: history,
+          lastMessage: lastMsg?.content?.slice(0, 60) || '',
+          rodrigoTriggered,
+          totalMessages: history.length,
+          unread: 0,
+        });
+      }
+    }
+
+    // Ordena por mais recente (mais mensagens = mais ativo)
+    conversations.sort((a, b) => b.totalMessages - a.totalMessages);
+
+    res.json({
+      conversations,
+      total: conversations.length,
+      rodrigoCount: conversations.filter(c => c.rodrigoTriggered).length,
+    });
+  } catch (err) {
+    console.error('Erro dashboard:', err.message);
+    res.json({ conversations: [], total: 0, rodrigoCount: 0 });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function transcribeAudio(audioId) {
   const mediaRes = await axios.get(
@@ -132,7 +197,7 @@ SERVIDORES E PREÇOS:
 - 1 mês: R$24,90 | 3 meses: R$49,90 | 6 meses: R$94,90 | 12 meses: R$149,90
 - Site: https://slimtv.fun/#inicio
 
-🟣 Outros servidores (Unitv, Uniplay, Warez, Space Play, Fast, Fire, Now, New TVS):
+🟣 Outros servidores (Unitv, Uniplay, Wares, Space Play, Fast, Fire, Now, New TVS):
 - 1 tela: R$30/mês | R$50/bimestral | R$90/trimestral
 - 2 telas: R$50/mês
 - 3 telas: R$70/mês
