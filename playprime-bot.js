@@ -85,4 +85,129 @@ app.post('/webhook', async (req, res) => {
 
     } catch (err) {
       console.error('Erro:', err.message);
-      awai
+      await sendMessage(from, 'Tive um probleminha técnico! Tenta de novo. 😅');
+    }
+  }
+});
+
+async function transcribeAudio(audioId) {
+  const mediaRes = await axios.get(
+    `https://graph.facebook.com/v18.0/${audioId}`,
+    { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
+  );
+
+  const audioBuffer = await axios.get(mediaRes.data.url, {
+    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+    responseType: 'arraybuffer'
+  });
+
+  const form = new FormData();
+  form.append('file', Buffer.from(audioBuffer.data), { filename: 'audio.ogg', contentType: 'audio/ogg' });
+  form.append('model', 'whisper-1');
+  form.append('language', 'pt');
+
+  const whisperRes = await axios.post(
+    'https://api.openai.com/v1/audio/transcriptions',
+    form,
+    { headers: { ...form.getHeaders(), Authorization: `Bearer ${OPENAI_API_KEY}` } }
+  );
+
+  return whisperRes.data.text;
+}
+
+async function askClaude(from, userMessage, history) {
+  history.push({ role: 'user', content: userMessage });
+
+  if (history.length > 20) history = history.slice(-20);
+
+  const response = await axios.post(
+    'https://api.anthropic.com/v1/messages',
+    {
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
+      system: `Você é J.A.R.V.I.S, assistente virtual masculino da Playprime, especializado em IPTV. Seja direto, simpático e objetivo. Mensagens CURTAS — máximo 3 linhas.
+
+ROTEIRO:
+1. Primeira mensagem: cumprimente e pergunte o nome. Depois que souber o nome, NUNCA mais pergunte.
+2. Pergunte a cidade e se já usa IPTV. Uma pergunta por vez.
+3. Apresente a Playprime: +15.000 conteúdos, Full HD/4K, sem fidelidade, suporte online. TV, celular, tablet e PC.
+
+SERVIDORES E PREÇOS:
+
+🔵 Slim TV (mais em conta):
+- 1 mês: R$24,90 | 3 meses: R$49,90 | 6 meses: R$94,90 | 12 meses: R$149,90
+- Site: https://slimtv.fun/#inicio
+
+🟣 Outros servidores (Unitv, Uniplay, Wares, Space Play, Fast, Fire, Now, New TVS):
+- 1 tela: R$30/mês | R$50/bimestral | R$90/trimestral
+- 2 telas: R$50/mês
+- 3 telas: R$70/mês
+- Preços revendedor: consultar Rodrigo
+
+FECHAMENTO: Quando cliente quiser comprar, diga: "Ótimo! Vou chamar o Rodrigo agora pra te ajudar a fechar! 😊" — use a palavra RODRIGO para acionar o atendimento.
+
+REGRAS:
+- Português informal
+- Máximo 3 linhas por resposta
+- Emojis moderados
+- Nunca invente preços fora da tabela
+- Se perguntado se é IA, diga que é o assistente virtual da Playprime
+- NUNCA repita perguntas já feitas
+- Foco total em vender IPTV`,
+      messages: history
+    },
+    {
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      }
+    }
+  );
+
+  const reply = response.data.content[0].text;
+  history.push({ role: 'assistant', content: reply });
+
+  try {
+    await redisClient.setEx(`chat:${from}`, 604800, JSON.stringify(history));
+  } catch (e) {}
+
+  return { reply, history };
+}
+
+async function sendImage(to, imageUrl, caption) {
+  await axios.post(
+    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: 'whatsapp',
+      to: to,
+      type: 'image',
+      image: { link: imageUrl, caption: caption }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+}
+
+async function sendMessage(to, text) {
+  await axios.post(
+    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: 'whatsapp',
+      to: to,
+      text: { body: text }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+}
+
+app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
