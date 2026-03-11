@@ -16,13 +16,11 @@ const REDIS_URL = process.env.REDIS_URL;
 const PORT = process.env.PORT || 3000;
 
 const MASCOTES_URL = 'https://lh3.googleusercontent.com/d/1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
-const LOGO_URL = 'https://lh3.googleusercontent.com/d/1OqF9Tt6yquEsjgU6m2bOlrgo9s3d39mE';
 
 const redisClient = redis.createClient({
   url: REDIS_URL,
   socket: {
-    tls: true,
-    rejectUnauthorized: false
+    reconnectStrategy: (retries) => Math.min(retries * 100, 3000)
   }
 });
 
@@ -76,12 +74,6 @@ app.post('/webhook', async (req, res) => {
       }
 
       const result = await askClaude(from, text, history);
-
-      const replyLower = result.reply.toLowerCase();
-
-      if (replyLower.includes('rodrigo')) {
-        await sendImage(from, LOGO_URL, '👽 Nossa equipe vai te atender agora!');
-      }
 
       await sendMessage(from, result.reply);
 
