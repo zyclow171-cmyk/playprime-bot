@@ -15,8 +15,8 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const REDIS_URL = process.env.REDIS_URL;
 const PORT = process.env.PORT || 3000;
 
-const LOGO_URL = 'https://drive.google.com/uc?id=1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
-const MASCOTES_URL = 'https://drive.google.com/uc?id=1OqF9Tt6yquEsjgU6m2bOlrgo9s3d39mE';
+const MASCOTES_URL = 'https://drive.google.com/uc?id=1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
+const LOGO_URL = 'https://drive.google.com/uc?id=1OqF9Tt6yquEsjgU6m2bOlrgo9s3d39mE';
 
 const redisClient = redis.createClient({ url: REDIS_URL });
 redisClient.connect().catch(console.error);
@@ -55,7 +55,6 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-      // Verifica se é primeira mensagem
       let history = [];
       try {
         const stored = await redisClient.get(`chat:${from}`);
@@ -64,18 +63,16 @@ app.post('/webhook', async (req, res) => {
 
       const isFirstMessage = history.length === 0;
 
-      // Envia logo na boas-vindas
       if (isFirstMessage) {
-        await sendImage(from, LOGO_URL, '🎉 Bem-vindo à Playprime!');
+        await sendImage(from, MASCOTES_URL, '🎉 Bem-vindo à Playprime!');
       }
 
       const result = await askClaude(from, text, history);
 
-      // Verifica se deve enviar mascotes (acionar Rodrigo)
       const replyLower = result.reply.toLowerCase();
 
       if (replyLower.includes('rodrigo')) {
-        await sendImage(from, MASCOTES_URL, '👽 Nossa equipe vai te atender agora!');
+        await sendImage(from, LOGO_URL, '👽 Nossa equipe vai te atender agora!');
       }
 
       await sendMessage(from, result.reply);
