@@ -81,6 +81,13 @@ app.post('/webhook', async (req, res) => {
       }
 
       const result = await askClaude(from, text, history);
+
+      // Envia link do Rodrigo se mencionado
+      const replyLower = result.reply.toLowerCase();
+      if (replyLower.includes('rodrigo')) {
+        await sendMessage(from, '👇 Clique aqui para falar com o Rodrigo agora:\nhttps://wa.me/5521964816185');
+      }
+
       await sendMessage(from, result.reply);
 
     } catch (err) {
