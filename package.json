@@ -6,10 +6,12 @@
     "start": "node playprime-bot.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
+    "axios": "^1.13.6",
+    "cheerio": "^1.2.0",
     "dotenv": "^16.0.0",
     "express": "^4.18.0",
     "form-data": "^4.0.0",
+    "puppeteer": "^24.39.1",
     "redis": "^4.6.0"
   }
 }
