@@ -1,9 +1,12 @@
 {
   "name": "playprime-bot",
   "version": "1.0.0",
-  "main": "playprime-bot.js",
+  "main": "lead-webhook.js",
   "scripts": {
-    "start": "node playprime-bot.js"
+    "start": "node lead-webhook.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
     "axios": "^1.13.6",

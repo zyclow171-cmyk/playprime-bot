@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>PlayPrime IPTV – Dashboard de Leads</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0d0d1a; color: #e0e0e0; min-height: 100vh; }
+
+  header {
+    background: linear-gradient(135deg, #1a0533, #2d0a5e);
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-bottom: 1px solid #7c3aed44;
+    box-shadow: 0 2px 20px #7c3aed33;
+  }
+  header h1 { font-size: 1.5rem; color: #a855f7; }
+  header span { font-size: 0.85rem; color: #888; }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 28px 20px; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .stat-card {
+    background: #161628;
+    border: 1px solid #2a2a4a;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    transition: border-color .2s;
+  }
+  .stat-card:hover { border-color: #7c3aed; }
+  .stat-card .num { font-size: 2.2rem; font-weight: 700; color: #a855f7; }
+  .stat-card .label { font-size: 0.8rem; color: #888; margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px; }
+  @media(max-width:800px){ .grid2 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: #161628;
+    border: 1px solid #2a2a4a;
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .card h2 { font-size: 1rem; color: #a855f7; margin-bottom: 16px; }
+
+  .leads-section { margin-bottom: 28px; }
+  .leads-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .leads-header h2 { color: #a855f7; font-size: 1rem; }
+
+  .search-bar {
+    background: #1e1e38;
+    border: 1px solid #3a3a6a;
+    border-radius: 8px;
+    padding: 8px 14px;
+    color: #e0e0e0;
+    font-size: 0.85rem;
+    width: 220px;
+    outline: none;
+  }
+  .search-bar:focus { border-color: #7c3aed; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { background: #1e1e38; color: #888; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 1px; padding: 10px 14px; text-align: left; }
+  td { padding: 12px 14px; border-bottom: 1px solid #1e1e38; vertical-align: middle; }
+  tr:hover td { background: #1a1a30; }
+  tr:last-child td { border-bottom: none; }
+
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  .badge-pendente  { background: #2a2a10; color: #facc15; border: 1px solid #facc1544; }
+  .badge-enviado   { background: #0a2a1a; color: #4ade80; border: 1px solid #4ade8044; }
+  .badge-respondeu { background: #0a1a3a; color: #60a5fa; border: 1px solid #60a5fa44; }
+
+  .btn {
+    border: none;
+    border-radius: 7px;
+    padding: 6px 12px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    font-weight: 600;
+    transition: opacity .2s;
+  }
+  .btn:hover { opacity: .8; }
+  .btn-msg  { background: #7c3aed; color: #fff; }
+  .btn-status { background: #1e1e38; color: #a0a0c0; border: 1px solid #3a3a6a; margin-left: 6px; }
+  .btn-add  { background: #7c3aed; color: #fff; padding: 9px 18px; font-size: 0.85rem; border-radius: 9px; }
+
+  select.status-sel {
+    background: #1e1e38;
+    border: 1px solid #3a3a6a;
+    color: #e0e0e0;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+
+  /* Modal */
+  .modal-bg {
+    display: none;
+    position: fixed; inset: 0;
+    background: #000000aa;
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-bg.open { display: flex; }
+  .modal {
+    background: #161628;
+    border: 1px solid #7c3aed55;
+    border-radius: 14px;
+    padding: 28px;
+    width: 100%;
+    max-width: 480px;
+    box-shadow: 0 8px 40px #7c3aed33;
+  }
+  .modal h3 { color: #a855f7; margin-bottom: 14px; }
+  .modal textarea {
+    width: 100%;
+    background: #1e1e38;
+    border: 1px solid #3a3a6a;
+    border-radius: 8px;
+    color: #e0e0e0;
+    padding: 12px;
+    font-size: 0.88rem;
+    resize: vertical;
+    min-height: 100px;
+    outline: none;
+    font-family: inherit;
+  }
+  .modal textarea:focus { border-color: #7c3aed; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+  .btn-cancel { background: #2a2a4a; color: #aaa; }
+  .btn-send { background: #7c3aed; color: #fff; }
+
+  .no-leads { text-align: center; padding: 40px; color: #555; }
+
+  .toast {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    background: #7c3aed;
+    color: #fff;
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-size: 0.88rem;
+    box-shadow: 0 4px 20px #7c3aed55;
+    display: none;
+    z-index: 200;
+  }
+  .toast.show { display: block; animation: fadeIn .3s; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🎬 PlayPrime IPTV</h1>
+    <span>Dashboard de Leads</span>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:10px;align-items:center;">
+    <span id="clock" style="color:#666;font-size:0.82rem;"></span>
+    <button class="btn btn-add" onclick="openAddModal()">+ Novo Lead</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat-card">
+      <div class="num" id="stat-total">0</div>
+      <div class="label">Total de Leads</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="stat-enviado" style="color:#4ade80">0</div>
+      <div class="label">Mensagens Enviadas</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="stat-respondeu" style="color:#60a5fa">0</div>
+      <div class="label">Responderam</div>
+    </div>
+    <div class="stat-card">
+      <div class="num" id="stat-pendente" style="color:#facc15">0</div>
+      <div class="label">Pendentes</div>
+    </div>
+  </div>
+
+  <!-- Chart + Top -->
+  <div class="grid2">
+    <div class="card">
+      <h2>📊 Leads por Dia</h2>
+      <canvas id="chartLeads" height="180"></canvas>
+    </div>
+    <div class="card">
+      <h2>📈 Taxa de Resposta</h2>
+      <canvas id="chartStatus" height="180"></canvas>
+    </div>
+  </div>
+
+  <!-- Leads Table -->
+  <div class="card leads-section">
+    <div class="leads-header">
+      <h2>📋 Lista de Leads</h2>
+      <input class="search-bar" type="text" id="searchInput" placeholder="🔍 Buscar por nome ou telefone..." oninput="filterLeads()"/>
+    </div>
+    <div id="leads-table-wrap">
+      <div class="no-leads">Carregando leads...</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Modal: Enviar Mensagem -->
+<div class="modal-bg" id="msgModal">
+  <div class="modal">
+    <h3>📩 Enviar Mensagem</h3>
+    <p style="color:#888;font-size:0.82rem;margin-bottom:12px;" id="modalPhone"></p>
+    <textarea id="msgText" placeholder="Digite a mensagem..."></textarea>
+    <div class="modal-actions">
+      <button class="btn btn-cancel" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-send" onclick="sendMessage()">Enviar WhatsApp</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Adicionar Lead -->
+<div class="modal-bg" id="addModal">
+  <div class="modal">
+    <h3>➕ Novo Lead</h3>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">
+      <input id="addName" placeholder="Nome" style="background:#1e1e38;border:1px solid #3a3a6a;border-radius:8px;padding:10px;color:#e0e0e0;font-size:0.88rem;outline:none;"/>
+      <input id="addPhone" placeholder="Telefone (ex: 5511999999999)" style="background:#1e1e38;border:1px solid #3a3a6a;border-radius:8px;padding:10px;color:#e0e0e0;font-size:0.88rem;outline:none;"/>
+      <input id="addEmail" placeholder="E-mail (opcional)" style="background:#1e1e38;border:1px solid #3a3a6a;border-radius:8px;padding:10px;color:#e0e0e0;font-size:0.88rem;outline:none;"/>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-cancel" onclick="closeAddModal()">Cancelar</button>
+      <button class="btn btn-send" onclick="addLead()">Adicionar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let allLeads = [];
+let currentLeadId = null;
+let chartLeads = null;
+let chartStatus = null;
+
+// Clock
+setInterval(() => {
+  document.getElementById("clock").textContent = new Date().toLocaleString("pt-BR");
+}, 1000);
+
+// Toast
+function showToast(msg, color="#7c3aed") {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.background = color;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 3000);
+}
+
+// Load leads
+async function loadLeads() {
+  const res = await fetch("/api/leads");
+  allLeads = await res.json();
+  renderStats();
+  renderTable(allLeads);
+  renderCharts();
+}
+
+function renderStats() {
+  document.getElementById("stat-total").textContent = allLeads.length;
+  document.getElementById("stat-enviado").textContent = allLeads.filter(l => l.status === "enviado").length;
+  document.getElementById("stat-respondeu").textContent = allLeads.filter(l => l.status === "respondeu").length;
+  document.getElementById("stat-pendente").textContent = allLeads.filter(l => l.status === "pendente").length;
+}
+
+function renderTable(leads) {
+  const wrap = document.getElementById("leads-table-wrap");
+  if (!leads.length) {
+    wrap.innerHTML = '<div class="no-leads">Nenhum lead encontrado.</div>';
+    return;
+  }
+  wrap.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Nome</th>
+          <th>Telefone</th>
+          <th>E-mail</th>
+          <th>Status</th>
+          <th>Data</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${leads.map(l => `
+          <tr>
+            <td><strong>${l.name}</strong></td>
+            <td>${l.phone}</td>
+            <td>${l.email || "-"}</td>
+            <td>
+              <select class="status-sel" onchange="updateStatus('${l.id}', this.value)">
+                <option value="pendente"  ${l.status==="pendente"?"selected":""}>⏳ Pendente</option>
+                <option value="enviado"   ${l.status==="enviado"?"selected":""}>✅ Enviado</option>
+                <option value="respondeu" ${l.status==="respondeu"?"selected":""}>💬 Respondeu</option>
+              </select>
+            </td>
+            <td>${new Date(l.createdAt).toLocaleString("pt-BR")}</td>
+            <td>
+              <button class="btn btn-msg" onclick="openMsgModal('${l.id}','${l.phone}','${l.name}')">📩 Mensagem</button>
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>`;
+}
+
+function filterLeads() {
+  const q = document.getElementById("searchInput").value.toLowerCase();
+  const filtered = allLeads.filter(l =>
+    l.name.toLowerCase().includes(q) || l.phone.includes(q)
+  );
+  renderTable(filtered);
+}
+
+function renderCharts() {
+  // Leads por dia
+  const days = {};
+  allLeads.forEach(l => {
+    const d = new Date(l.createdAt).toLocaleDateString("pt-BR");
+    days[d] = (days[d] || 0) + 1;
+  });
+  const labels = Object.keys(days).slice(-7);
+  const data = labels.map(d => days[d]);
+
+  if (chartLeads) chartLeads.destroy();
+  chartLeads = new Chart(document.getElementById("chartLeads"), {
+    type: "bar",
+    data: {
+      labels: labels.length ? labels : ["Sem dados"],
+      datasets: [{
+        label: "Leads",
+        data: data.length ? data : [0],
+        backgroundColor: "#7c3aed99",
+        borderColor: "#a855f7",
+        borderWidth: 2,
+        borderRadius: 6
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#888" }, grid: { color: "#1e1e38" } },
+        y: { ticks: { color: "#888", stepSize: 1 }, grid: { color: "#1e1e38" } }
+      }
+    }
+  });
+
+  // Status pie
+  if (chartStatus) chartStatus.destroy();
+  chartStatus = new Chart(document.getElementById("chartStatus"), {
+    type: "doughnut",
+    data: {
+      labels: ["Pendente", "Enviado", "Respondeu"],
+      datasets: [{
+        data: [
+          allLeads.filter(l=>l.status==="pendente").length,
+          allLeads.filter(l=>l.status==="enviado").length,
+          allLeads.filter(l=>l.status==="respondeu").length
+        ],
+        backgroundColor: ["#facc1599","#4ade8099","#60a5fa99"],
+        borderColor: ["#facc15","#4ade80","#60a5fa"],
+        borderWidth: 2
+      }]
+    },
+    options: {
+      plugins: {
+        legend: { labels: { color: "#aaa", font: { size: 12 } } }
+      },
+      cutout: "65%"
+    }
+  });
+}
+
+// Update status
+async function updateStatus(id, status) {
+  await fetch(`/api/leads/${id}/status`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status })
+  });
+  const lead = allLeads.find(l => l.id === id);
+  if (lead) lead.status = status;
+  renderStats();
+  renderCharts();
+  showToast("Status atualizado!");
+}
+
+// Message modal
+function openMsgModal(id, phone, name) {
+  currentLeadId = id;
+  document.getElementById("modalPhone").textContent = `Para: ${name} (${phone})`;
+  document.getElementById("msgText").value = "";
+  document.getElementById("msgModal").classList.add("open");
+}
+function closeModal() {
+  document.getElementById("msgModal").classList.remove("open");
+  currentLeadId = null;
+}
+
+async function sendMessage() {
+  const msg = document.getElementById("msgText").value.trim();
+  if (!msg) return showToast("Digite uma mensagem!", "#e11d48");
+  const res = await fetch(`/api/leads/${currentLeadId}/message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: msg })
+  });
+  if (res.ok) {
+    showToast("✅ Mensagem enviada!");
+    closeModal();
+    loadLeads();
+  } else {
+    const err = await res.json();
+    showToast("Erro: " + err.error, "#e11d48");
+  }
+}
+
+// Add lead modal
+function openAddModal() { document.getElementById("addModal").classList.add("open"); }
+function closeAddModal() { document.getElementById("addModal").classList.remove("open"); }
+
+async function addLead() {
+  const name = document.getElementById("addName").value.trim();
+  const phone = document.getElementById("addPhone").value.trim();
+  const email = document.getElementById("addEmail").value.trim();
+  if (!phone) return showToast("Telefone é obrigatório!", "#e11d48");
+  const res = await fetch("/lead", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: name || "Desconhecido", phone, email })
+  });
+  if (res.ok) {
+    showToast("✅ Lead adicionado!");
+    closeAddModal();
+    loadLeads();
+  } else {
+    showToast("Erro ao adicionar lead", "#e11d48");
+  }
+}
+
+// Close modals clicking outside
+document.getElementById("msgModal").addEventListener("click", e => { if(e.target===e.currentTarget) closeModal(); });
+document.getElementById("addModal").addEventListener("click", e => { if(e.target===e.currentTarget) closeAddModal(); });
+
+// Init
+loadLeads();
+setInterval(loadLeads, 30000); // auto-refresh every 30s
+</script>
+</body>
+</html>

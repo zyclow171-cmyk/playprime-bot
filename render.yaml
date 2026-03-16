@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: playprime-bot
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NUMERO_ID
+        sync: false
+      - key: WHATSAPP_TOKEN
+        sync: false
+    autoDeploy: true
