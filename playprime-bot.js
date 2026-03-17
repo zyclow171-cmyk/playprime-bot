@@ -4,6 +4,7 @@ const axios = require('axios');
 const FormData = require('form-data');
 const redis = require('redis');
 const path = require('path');
+const { registrarLeadRoutes, adicionarLead } = require('./lead-webhook');
 
 const app = express();
 app.use(express.json());
@@ -34,6 +35,9 @@ const redisClient = redis.createClient({
 redisClient.on('error', (err) => console.log('Redis error:', err));
 redisClient.connect().catch(console.error);
 
+// Registra as rotas do painel de leads
+registrarLeadRoutes(app, sendMessage);
+
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -52,10 +56,12 @@ app.post('/webhook', async (req, res) => {
     const entry = body.entry?.[0];
     const changes = entry?.changes?.[0];
     const message = changes?.value?.messages?.[0];
+    const contacts = changes?.value?.contacts?.[0];
 
     if (!message) return;
 
     const from = message.from;
+    const nomeContato = contacts?.profile?.name || null;
     let text = '';
 
     try {
@@ -78,6 +84,16 @@ app.post('/webhook', async (req, res) => {
 
       if (isFirstMessage) {
         await sendImage(from, MASCOTES_URL, '🎉 Bem-vindo à Playprime!');
+
+        // Registra o lead ao primeiro contato
+        const novoLead = {
+          id: from,
+          phone: from,
+          name: nomeContato || 'Desconhecido',
+          status: 'novo',
+          data: new Date().toISOString()
+        };
+        adicionarLead(novoLead);
       }
 
       const result = await askClaude(from, text, history);
