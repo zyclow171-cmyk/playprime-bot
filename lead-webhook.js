@@ -5,7 +5,11 @@ const LEADS_FILE = path.join(__dirname, 'leads.json');
 
 function lerLeads() {
   if (!fs.existsSync(LEADS_FILE)) return [];
-  return JSON.parse(fs.readFileSync(LEADS_FILE, 'utf8'));
+  try {
+    return JSON.parse(fs.readFileSync(LEADS_FILE, 'utf8'));
+  } catch (e) {
+    return [];
+  }
 }
 
 function salvarLeads(leads) {
@@ -44,8 +48,11 @@ function registrarLeadRoutes(app, sendMessage) {
 
 function adicionarLead(lead) {
   const leads = lerLeads();
-  leads.push(lead);
-  salvarLeads(leads);
+  const existe = leads.find(l => l.id === lead.id);
+  if (!existe) {
+    leads.push(lead);
+    salvarLeads(leads);
+  }
 }
 
-module.exports = { registrarLeadRoutes, adicionarLead };
+module.exports = { registrarLeadRoutes, adicionarLead, lerLeads };
