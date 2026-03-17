@@ -4,12 +4,12 @@ const axios = require('axios');
 const FormData = require('form-data');
 const redis = require('redis');
 const path = require('path');
-const { registrarLeadRoutes, adicionarLead } = require('./lead-webhook');
+const { registrarLeadRoutes, adicionarLead, lerLeads } = require('./lead-webhook');
 
 const app = express();
 app.use(express.json());
 
-// Serve a landing page
+// Serve arquivos estáticos
 app.use(express.static(__dirname));
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
@@ -25,6 +25,8 @@ const PORT = process.env.PORT || 3000;
 
 const MASCOTES_URL = 'https://lh3.googleusercontent.com/d/1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
 
+const startTime = Date.now();
+
 const redisClient = redis.createClient({
   url: REDIS_URL,
   socket: {
@@ -35,8 +37,34 @@ const redisClient = redis.createClient({
 redisClient.on('error', (err) => console.log('Redis error:', err));
 redisClient.connect().catch(console.error);
 
-// Registra as rotas do painel de leads
+// Registra rotas do painel de leads
 registrarLeadRoutes(app, sendMessage);
+
+// Rota de status para o painel
+app.get('/status', async (req, res) => {
+  try {
+    const leads = lerLeads();
+    const uptime_segundos = Math.floor((Date.now() - startTime) / 1000);
+
+    const conversas_ativas = leads.length;
+    const aguardando_humano = leads.filter(l => l.status === 'humano').length;
+    const pedidos = {
+      aguardando_pagamento: leads.filter(l => l.status === 'pedido').length,
+      enviado: leads.filter(l => l.status === 'enviado').length,
+    };
+
+    res.json({
+      ok: true,
+      conversas_ativas,
+      aguardando_humano,
+      pedidos,
+      uptime_segundos,
+      timestamp: new Date().toLocaleTimeString('pt-BR')
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -61,7 +89,7 @@ app.post('/webhook', async (req, res) => {
     if (!message) return;
 
     const from = message.from;
-    const nomeContato = contacts?.profile?.name || null;
+    const nomeContato = contacts?.profile?.name || 'Desconhecido';
     let text = '';
 
     try {
@@ -86,14 +114,23 @@ app.post('/webhook', async (req, res) => {
         await sendImage(from, MASCOTES_URL, '🎉 Bem-vindo à Playprime!');
 
         // Registra o lead ao primeiro contato
-        const novoLead = {
+        adicionarLead({
           id: from,
           phone: from,
-          name: nomeContato || 'Desconhecido',
+          name: nomeContato,
           status: 'novo',
+          ultimaMensagem: text,
           data: new Date().toISOString()
-        };
-        adicionarLead(novoLead);
+        });
+      } else {
+        // Atualiza a última mensagem do lead
+        const leads = lerLeads();
+        const lead = leads.find(l => l.id === from);
+        if (lead) {
+          lead.ultimaMensagem = text;
+          lead.hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+          const { salvarLeads } = require('./lead-webhook');
+        }
       }
 
       const result = await askClaude(from, text, history);
@@ -101,6 +138,14 @@ app.post('/webhook', async (req, res) => {
       // Envia link do Rodrigo se mencionado
       const replyLower = result.reply.toLowerCase();
       if (replyLower.includes('rodrigo')) {
+        // Marca lead como aguardando humano
+        const leads = lerLeads();
+        const lead = leads.find(l => l.id === from);
+        if (lead) {
+          lead.status = 'humano';
+          const fs = require('fs');
+          fs.writeFileSync(require('path').join(__dirname, 'leads.json'), JSON.stringify(leads, null, 2));
+        }
         await sendMessage(from, '👇 Clique aqui para falar com o Rodrigo agora:\nhttps://wa.me/5521964816185');
       }
 
