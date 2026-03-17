@@ -55,4 +55,4 @@ function adicionarLead(lead) {
   }
 }
 
-module.exports = { registrarLeadRoutes, adicionarLead, lerLeads };
+module.exports = { registrarLeadRoutes, adicionarLead, lerLeads, salvarLeads };
