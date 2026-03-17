@@ -4,12 +4,12 @@ const axios = require('axios');
 const FormData = require('form-data');
 const redis = require('redis');
 const path = require('path');
-const { registrarLeadRoutes, adicionarLead, lerLeads } = require('./lead-webhook');
+const fs = require('fs');
+const { registrarLeadRoutes, adicionarLead, lerLeads, salvarLeads } = require('./lead-webhook');
 
 const app = express();
 app.use(express.json());
 
-// Serve arquivos estáticos
 app.use(express.static(__dirname));
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
@@ -24,45 +24,49 @@ const REDIS_URL = process.env.REDIS_URL;
 const PORT = process.env.PORT || 3000;
 
 const MASCOTES_URL = 'https://lh3.googleusercontent.com/d/1nXzIAHNdpLxByUA966fUJ_P4uXw1Ba3h';
-
 const startTime = Date.now();
 
 const redisClient = redis.createClient({
   url: REDIS_URL,
-  socket: {
-    reconnectStrategy: (retries) => Math.min(retries * 100, 3000)
-  }
+  socket: { reconnectStrategy: (retries) => Math.min(retries * 100, 3000) }
 });
 
 redisClient.on('error', (err) => console.log('Redis error:', err));
 redisClient.connect().catch(console.error);
 
-// Registra rotas do painel de leads
+// Rotas do painel
 registrarLeadRoutes(app, sendMessage);
 
-// Rota de status para o painel
+// Status geral
 app.get('/status', async (req, res) => {
   try {
     const leads = lerLeads();
     const uptime_segundos = Math.floor((Date.now() - startTime) / 1000);
-
-    const conversas_ativas = leads.length;
-    const aguardando_humano = leads.filter(l => l.status === 'humano').length;
-    const pedidos = {
-      aguardando_pagamento: leads.filter(l => l.status === 'pedido').length,
-      enviado: leads.filter(l => l.status === 'enviado').length,
-    };
-
     res.json({
       ok: true,
-      conversas_ativas,
-      aguardando_humano,
-      pedidos,
+      conversas_ativas: leads.length,
+      aguardando_humano: leads.filter(l => l.status === 'humano').length,
+      pedidos: {
+        aguardando_pagamento: leads.filter(l => l.status === 'pedido').length,
+        enviado: leads.filter(l => l.status === 'enviado').length,
+      },
       uptime_segundos,
       timestamp: new Date().toLocaleTimeString('pt-BR')
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Histórico de conversa de um lead
+app.get('/api/leads/:id/history', async (req, res) => {
+  try {
+    const id = decodeURIComponent(req.params.id);
+    const stored = await redisClient.get(`chat:${id}`);
+    const history = stored ? JSON.parse(stored) : [];
+    res.json(history);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -112,39 +116,35 @@ app.post('/webhook', async (req, res) => {
 
       if (isFirstMessage) {
         await sendImage(from, MASCOTES_URL, '🎉 Bem-vindo à Playprime!');
-
-        // Registra o lead ao primeiro contato
         adicionarLead({
           id: from,
           phone: from,
           name: nomeContato,
           status: 'novo',
           ultimaMensagem: text,
+          hora: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
           data: new Date().toISOString()
         });
       } else {
-        // Atualiza a última mensagem do lead
+        // Atualiza última mensagem
         const leads = lerLeads();
         const lead = leads.find(l => l.id === from);
         if (lead) {
           lead.ultimaMensagem = text;
           lead.hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-          const { salvarLeads } = require('./lead-webhook');
+          salvarLeads(leads);
         }
       }
 
       const result = await askClaude(from, text, history);
 
-      // Envia link do Rodrigo se mencionado
       const replyLower = result.reply.toLowerCase();
       if (replyLower.includes('rodrigo')) {
-        // Marca lead como aguardando humano
         const leads = lerLeads();
         const lead = leads.find(l => l.id === from);
         if (lead) {
           lead.status = 'humano';
-          const fs = require('fs');
-          fs.writeFileSync(require('path').join(__dirname, 'leads.json'), JSON.stringify(leads, null, 2));
+          salvarLeads(leads);
         }
         await sendMessage(from, '👇 Clique aqui para falar com o Rodrigo agora:\nhttps://wa.me/5521964816185');
       }
@@ -163,29 +163,24 @@ async function transcribeAudio(audioId) {
     `https://graph.facebook.com/v18.0/${audioId}`,
     { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
   );
-
   const audioBuffer = await axios.get(mediaRes.data.url, {
     headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
     responseType: 'arraybuffer'
   });
-
   const form = new FormData();
   form.append('file', Buffer.from(audioBuffer.data), { filename: 'audio.ogg', contentType: 'audio/ogg' });
   form.append('model', 'whisper-1');
   form.append('language', 'pt');
-
   const whisperRes = await axios.post(
     'https://api.openai.com/v1/audio/transcriptions',
     form,
     { headers: { ...form.getHeaders(), Authorization: `Bearer ${OPENAI_API_KEY}` } }
   );
-
   return whisperRes.data.text;
 }
 
 async function askClaude(from, userMessage, history) {
   history.push({ role: 'user', content: userMessage });
-
   if (history.length > 20) history = history.slice(-20);
 
   const response = await axios.post(
@@ -248,16 +243,11 @@ async function sendImage(to, imageUrl, caption) {
     `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
     {
       messaging_product: 'whatsapp',
-      to: to,
+      to,
       type: 'image',
-      image: { link: imageUrl, caption: caption }
+      image: { link: imageUrl, caption }
     },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    }
+    { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' } }
   );
 }
 
@@ -266,15 +256,10 @@ async function sendMessage(to, text) {
     `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
     {
       messaging_product: 'whatsapp',
-      to: to,
+      to,
       text: { body: text }
     },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    }
+    { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' } }
   );
 }
 
