@@ -1,706 +1,374 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Giltec — Painel CRM</title>
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --bg: #0d0f0e;
-    --bg2: #141714;
-    --bg3: #1c201c;
-    --border: #2a2e2a;
-    --accent: #f5a623;
-    --accent2: #e8520a;
-    --green: #3dd68c;
-    --yellow: #f5c842;
-    --red: #f54242;
-    --blue: #42a5f5;
-    --text: #e8ede8;
-    --muted: #6b7a6b;
+require('dotenv').config();
+const express = require('express');
+const axios = require('axios');
+const FormData = require('form-data');
+const redis = require('redis');
+const path = require('path');
+
+const app = express();
+app.use(express.json());
+app.use(express.static(__dirname));
+
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/painel', (req, res) => res.sendFile(path.join(__dirname, 'painel-playprime.html')));
+
+const WHATSAPP_TOKEN    = process.env.WHATSAPP_TOKEN;
+const PHONE_NUMBER_ID   = process.env.PHONE_NUMBER_ID;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const OPENAI_API_KEY    = process.env.OPENAI_API_KEY;
+const VERIFY_TOKEN      = process.env.VERIFY_TOKEN;
+const REDIS_URL         = process.env.REDIS_URL;
+const PORT              = process.env.PORT || 3000;
+
+// ─── REDIS ────────────────────────────────────────────────────────────────────
+const redisClient = redis.createClient({
+  url: REDIS_URL,
+  socket: { reconnectStrategy: (r) => Math.min(r * 100, 3000) }
+});
+redisClient.on('error', (err) => console.log('Redis error:', err));
+redisClient.connect().catch(console.error);
+
+// ─── CRM / LEADS (salvo no Redis) ─────────────────────────────────────────────
+async function lerLeads() {
+  try {
+    const data = await redisClient.get('giltec:leads');
+    return data ? JSON.parse(data) : [];
+  } catch { return []; }
+}
+
+async function salvarLeads(leads) {
+  try {
+    await redisClient.set('giltec:leads', JSON.stringify(leads));
+  } catch (e) { console.log('Erro ao salvar leads:', e.message); }
+}
+
+async function upsertLead(phone, dados) {
+  const leads = await lerLeads();
+  const idx = leads.findIndex(l => l.phone === phone);
+  if (idx >= 0) {
+    leads[idx] = { ...leads[idx], ...dados, updatedAt: new Date().toISOString() };
+  } else {
+    leads.push({
+      id: `GILTEC-${Date.now()}`,
+      phone,
+      nome_contato: '',
+      nome_empresa: '',
+      cidade: '',
+      equipamentos_interesse: [],
+      status_crm: 'novo',
+      reuniao_agendada: null,
+      primeiro_contato: true,
+      follow_ups: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ...dados
+    });
   }
+  await salvarLeads(leads);
+}
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Barlow', sans-serif;
-    min-height: 100vh;
-    overflow-x: hidden;
+async function addFollowUp(phone, nota) {
+  const leads = await lerLeads();
+  const lead = leads.find(l => l.phone === phone);
+  if (lead) {
+    lead.follow_ups.push({ data: new Date().toISOString(), nota });
+    lead.updatedAt = new Date().toISOString();
+    await salvarLeads(leads);
   }
-
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(245,166,35,0.02) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(245,166,35,0.02) 1px, transparent 1px);
-    background-size: 60px 60px;
-    pointer-events: none;
-    z-index: 0;
-  }
-
-  .container { position: relative; z-index: 1; max-width: 1500px; margin: 0 auto; padding: 0 28px; }
-
-  /* HEADER */
-  header {
-    border-bottom: 1px solid var(--border);
-    padding: 18px 0;
-    background: rgba(13,15,14,0.9);
-    backdrop-filter: blur(20px);
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-
-  .header-inner { display: flex; align-items: center; justify-content: space-between; }
-
-  .logo { display: flex; align-items: center; gap: 14px; }
-
-  .logo-icon {
-    width: 44px; height: 44px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 22px;
-    box-shadow: 0 4px 20px rgba(245,166,35,0.3);
-  }
-
-  .logo-text h1 {
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 22px; font-weight: 800;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-  }
-
-  .logo-text span { color: var(--accent); }
-  .logo-text p { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; }
-
-  .header-right { display: flex; align-items: center; gap: 12px; }
-
-  .status-pill {
-    display: flex; align-items: center; gap: 8px;
-    background: rgba(61,214,140,0.1);
-    border: 1px solid rgba(61,214,140,0.3);
-    border-radius: 100px; padding: 6px 14px;
-    font-size: 12px; color: var(--green); font-weight: 600;
-    text-transform: uppercase; letter-spacing: 1px;
-  }
-
-  .status-dot {
-    width: 7px; height: 7px;
-    background: var(--green); border-radius: 50%;
-    animation: pulse 2s infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.4; transform: scale(0.7); }
-  }
-
-  .btn {
-    background: var(--bg3); border: 1px solid var(--border);
-    color: var(--text); padding: 8px 16px; border-radius: 6px;
-    cursor: pointer; font-size: 12px; font-family: 'Barlow', sans-serif;
-    font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
-    transition: all 0.2s; display: flex; align-items: center; gap: 6px;
-  }
-  .btn:hover { background: var(--border); border-color: var(--accent); color: var(--accent); }
-
-  /* MAIN */
-  main { padding: 28px 0; }
-
-  /* STATS */
-  .stats-grid {
-    display: grid; grid-template-columns: repeat(6, 1fr);
-    gap: 14px; margin-bottom: 28px;
-  }
-
-  .stat-card {
-    background: var(--bg2); border: 1px solid var(--border);
-    border-radius: 12px; padding: 20px;
-    position: relative; overflow: hidden;
-    animation: fadeUp 0.5s ease both;
-    transition: border-color 0.2s;
-    cursor: default;
-  }
-
-  .stat-card:hover { border-color: var(--accent); }
-
-  .stat-card::after {
-    content: '';
-    position: absolute; bottom: 0; left: 0; right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, var(--accent), var(--accent2));
-    transform: scaleX(0); transition: transform 0.3s;
-    transform-origin: left;
-  }
-  .stat-card:hover::after { transform: scaleX(1); }
-
-  @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(16px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  .stat-card:nth-child(1) { animation-delay: 0.05s; }
-  .stat-card:nth-child(2) { animation-delay: 0.1s; }
-  .stat-card:nth-child(3) { animation-delay: 0.15s; }
-  .stat-card:nth-child(4) { animation-delay: 0.2s; }
-  .stat-card:nth-child(5) { animation-delay: 0.25s; }
-  .stat-card:nth-child(6) { animation-delay: 0.3s; }
-
-  .stat-icon { font-size: 24px; margin-bottom: 12px; }
-  .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; }
-  .stat-value { font-family: 'Barlow Condensed', sans-serif; font-size: 38px; font-weight: 800; line-height: 1; }
-  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
-
-  /* LAYOUT */
-  .content-grid { display: grid; grid-template-columns: 1fr 360px; gap: 20px; }
-
-  /* PANEL */
-  .panel {
-    background: var(--bg2); border: 1px solid var(--border);
-    border-radius: 12px; overflow: hidden;
-    animation: fadeUp 0.5s ease 0.4s both;
-  }
-
-  .panel-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 18px 22px; border-bottom: 1px solid var(--border);
-  }
-
-  .panel-title {
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 16px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 1px;
-  }
-
-  .badge {
-    font-size: 11px; font-weight: 700; padding: 3px 10px;
-    border-radius: 100px; text-transform: uppercase; letter-spacing: 1px;
-  }
-  .badge-orange { background: rgba(245,166,35,0.15); color: var(--accent); border: 1px solid rgba(245,166,35,0.3); }
-  .badge-green { background: rgba(61,214,140,0.15); color: var(--green); border: 1px solid rgba(61,214,140,0.3); }
-  .badge-red { background: rgba(245,66,66,0.15); color: var(--red); border: 1px solid rgba(245,66,66,0.3); }
-  .badge-yellow { background: rgba(245,200,66,0.15); color: var(--yellow); border: 1px solid rgba(245,200,66,0.3); }
-  .badge-blue { background: rgba(66,165,245,0.15); color: var(--blue); border: 1px solid rgba(66,165,245,0.3); }
-
-  /* FILTROS */
-  .filter-bar {
-    display: flex; gap: 8px; padding: 14px 22px;
-    border-bottom: 1px solid var(--border); flex-wrap: wrap;
-  }
-
-  .filter-btn {
-    padding: 5px 14px; border-radius: 100px; font-size: 11px;
-    font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
-    cursor: pointer; border: 1px solid var(--border);
-    background: transparent; color: var(--muted);
-    transition: all 0.2s; font-family: 'Barlow', sans-serif;
-  }
-  .filter-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .filter-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
-
-  /* LEADS LIST */
-  .leads-list { max-height: 560px; overflow-y: auto; }
-  .leads-list::-webkit-scrollbar { width: 4px; }
-  .leads-list::-webkit-scrollbar-track { background: transparent; }
-  .leads-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-
-  .lead-item {
-    display: flex; align-items: center; gap: 16px;
-    padding: 16px 22px; border-bottom: 1px solid var(--border);
-    transition: background 0.15s; cursor: pointer;
-  }
-  .lead-item:hover { background: var(--bg3); }
-  .lead-item:last-child { border-bottom: none; }
-
-  .lead-avatar {
-    width: 40px; height: 40px; border-radius: 8px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    display: flex; align-items: center; justify-content: center;
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 16px; font-weight: 800; color: #000;
-    flex-shrink: 0;
-  }
-
-  .lead-info { flex: 1; min-width: 0; }
-  .lead-name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .lead-empresa { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .lead-equip { font-size: 11px; color: var(--accent); margin-top: 2px; }
-
-  .lead-meta { text-align: right; flex-shrink: 0; }
-  .lead-time { font-size: 11px; color: var(--muted); }
-  .lead-phone { font-size: 11px; color: var(--muted); margin-top: 2px; }
-
-  /* EMPTY */
-  .empty {
-    text-align: center; padding: 50px 20px;
-    color: var(--muted);
-  }
-  .empty-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.4; }
-  .empty-text { font-size: 13px; }
-
-  /* LOADING */
-  .loading { text-align: center; padding: 40px; color: var(--muted); font-size: 13px; }
-  .spinner {
-    width: 20px; height: 20px; border: 2px solid var(--border);
-    border-top-color: var(--accent); border-radius: 50%;
-    animation: spin 0.8s linear infinite; display: inline-block; margin-right: 8px;
-    vertical-align: middle;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* SIDEBAR */
-  .sidebar { display: flex; flex-direction: column; gap: 16px; }
-
-  /* INFO CARDS */
-  .info-row {
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 13px; padding: 10px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .info-row:last-child { border-bottom: none; }
-  .info-label { color: var(--muted); }
-  .info-value { font-weight: 600; }
-
-  /* FUNIL */
-  .funil-item {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 22px; border-bottom: 1px solid var(--border);
-  }
-  .funil-item:last-child { border-bottom: none; }
-  .funil-bar-bg { flex: 1; height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
-  .funil-bar { height: 100%; border-radius: 3px; transition: width 0.8s ease; }
-  .funil-label { font-size: 12px; color: var(--muted); width: 100px; }
-  .funil-count { font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 700; width: 30px; text-align: right; }
-
-  /* MODAL */
-  .modal-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
-    z-index: 1000; display: none; align-items: center; justify-content: center;
-    backdrop-filter: blur(4px);
-  }
-  .modal-overlay.open { display: flex; }
-  .modal {
-    background: var(--bg2); border: 1px solid var(--border);
-    border-radius: 16px; padding: 28px; width: 500px; max-width: 95vw;
-    animation: fadeUp 0.3s ease;
-  }
-  .modal h3 { font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 700; margin-bottom: 20px; text-transform: uppercase; }
-  .modal-field { margin-bottom: 14px; }
-  .modal-field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 6px; }
-  .modal-field p { font-size: 14px; font-weight: 500; }
-  .modal-actions { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
-  .btn-primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
-  .btn-primary:hover { background: var(--accent2); border-color: var(--accent2); color: #fff; }
-  .btn-close { margin-left: auto; }
-
-  select.btn { appearance: none; padding-right: 20px; }
-
-  @media (max-width: 1100px) {
-    .stats-grid { grid-template-columns: repeat(3, 1fr); }
-    .content-grid { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 600px) {
-    .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  }
-</style>
-</head>
-<body>
-
-<header>
-  <div class="container">
-    <div class="header-inner">
-      <div class="logo">
-        <div class="logo-icon">🏗️</div>
-        <div class="logo-text">
-          <h1>Giltec <span>CRM</span></h1>
-          <p>Painel de Leads & Atendimento</p>
-        </div>
-      </div>
-      <div class="header-right">
-        <div class="status-pill" id="statusPill">
-          <div class="status-dot"></div>
-          <span id="statusText">Conectando...</span>
-        </div>
-        <button class="btn" onclick="carregarLeads()">↻ Atualizar</button>
-      </div>
-    </div>
-  </div>
-</header>
-
-<main>
-  <div class="container">
-
-    <!-- STATS -->
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-icon">📋</div>
-        <div class="stat-label">Total Leads</div>
-        <div class="stat-value" id="statTotal" style="color:var(--accent)">—</div>
-        <div class="stat-sub">captados</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon">🆕</div>
-        <div class="stat-label">Novos</div>
-        <div class="stat-value" id="statNovos" style="color:var(--blue)">—</div>
-        <div class="stat-sub">aguardando</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon">💬</div>
-        <div class="stat-label">Contatados</div>
-        <div class="stat-value" id="statContatados" style="color:var(--yellow)">—</div>
-        <div class="stat-sub">em conversa</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon">⚡</div>
-        <div class="stat-label">Interessados</div>
-        <div class="stat-value" id="statInteressados" style="color:var(--accent)">—</div>
-        <div class="stat-sub">querem locar</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon">🔥</div>
-        <div class="stat-label">Quentes</div>
-        <div class="stat-value" id="statQuentes" style="color:var(--accent2)">—</div>
-        <div class="stat-sub">prontos p/ fechar</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-icon">📅</div>
-        <div class="stat-label">Reuniões</div>
-        <div class="stat-value" id="statReunioes" style="color:var(--green)">—</div>
-        <div class="stat-sub">agendadas</div>
-      </div>
-    </div>
-
-    <div class="content-grid">
-
-      <!-- LEADS -->
-      <div>
-        <div class="panel">
-          <div class="panel-header">
-            <div class="panel-title">👷 Leads Captados</div>
-            <span class="badge badge-orange" id="badgeTotal">0</span>
-          </div>
-          <div class="filter-bar">
-            <button class="filter-btn active" onclick="filtrar('todos', this)">Todos</button>
-            <button class="filter-btn" onclick="filtrar('novo', this)">Novos</button>
-            <button class="filter-btn" onclick="filtrar('contatado', this)">Contatados</button>
-            <button class="filter-btn" onclick="filtrar('interessado', this)">Interessados</button>
-            <button class="filter-btn" onclick="filtrar('quente', this)">Quentes 🔥</button>
-            <button class="filter-btn" onclick="filtrar('reuniao_agendada', this)">Reunião 📅</button>
-            <button class="filter-btn" onclick="filtrar('fechado', this)">Fechados ✅</button>
-          </div>
-          <div class="leads-list" id="leadsList">
-            <div class="loading"><div class="spinner"></div> Carregando leads...</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- SIDEBAR -->
-      <div class="sidebar">
-
-        <!-- FUNIL -->
-        <div class="panel" style="animation-delay:0.5s">
-          <div class="panel-header">
-            <div class="panel-title">📊 Funil de Vendas</div>
-          </div>
-          <div id="funilList">
-            <div class="loading"><div class="spinner"></div></div>
-          </div>
-        </div>
-
-        <!-- INFO BOT -->
-        <div class="panel" style="animation-delay:0.6s">
-          <div class="panel-header">
-            <div class="panel-title">🤖 Info do Sistema</div>
-          </div>
-          <div style="padding: 8px 22px;">
-            <div class="info-row">
-              <span class="info-label">Empresa</span>
-              <span class="info-value">Giltec Locações 🏗️</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Assistente</span>
-              <span class="info-value" style="color:var(--accent)">LIS 🤖</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Atendente</span>
-              <span class="info-value" style="color:var(--green)">Neto 👷</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Servidor</span>
-              <span class="info-value" id="infoUptime">—</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Atualizado</span>
-              <span class="info-value" id="infoTimestamp" style="font-size:11px">—</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- AÇÕES RÁPIDAS -->
-        <div class="panel" style="animation-delay:0.7s">
-          <div class="panel-header">
-            <div class="panel-title">⚡ Ações Rápidas</div>
-          </div>
-          <div style="padding: 16px 22px; display:flex; flex-direction:column; gap:10px;">
-            <button class="btn btn-primary" onclick="filtrar('quente', document.querySelector('.filter-btn'))" style="justify-content:center">
-              🔥 Ver Leads Quentes
-            </button>
-            <button class="btn" onclick="filtrar('reuniao_agendada', document.querySelector('.filter-btn'))" style="justify-content:center">
-              📅 Ver Reuniões Agendadas
-            </button>
-            <button class="btn" onclick="window.open('https://wa.me/5521974766117', '_blank')" style="justify-content:center">
-              📲 Chamar Neto no WhatsApp
-            </button>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  </div>
-</main>
-
-<!-- MODAL LEAD -->
-<div class="modal-overlay" id="modalOverlay" onclick="fecharModal(event)">
-  <div class="modal">
-    <h3>👷 Detalhes do Lead</h3>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0 20px;">
-      <div class="modal-field">
-        <label>Empresa</label>
-        <p id="mEmpresa">—</p>
-      </div>
-      <div class="modal-field">
-        <label>Contato</label>
-        <p id="mContato">—</p>
-      </div>
-      <div class="modal-field">
-        <label>Telefone</label>
-        <p id="mPhone">—</p>
-      </div>
-      <div class="modal-field">
-        <label>Cidade</label>
-        <p id="mCidade">—</p>
-      </div>
-      <div class="modal-field" style="grid-column:span 2">
-        <label>Equipamentos de Interesse</label>
-        <p id="mEquip">—</p>
-      </div>
-      <div class="modal-field">
-        <label>Status CRM</label>
-        <p id="mStatus">—</p>
-      </div>
-      <div class="modal-field">
-        <label>Captado em</label>
-        <p id="mData">—</p>
-      </div>
-    </div>
-    <div class="modal-field" style="margin-top:10px">
-      <label>Alterar Status</label>
-      <select class="btn" id="mStatusSelect" style="width:100%">
-        <option value="novo">Novo</option>
-        <option value="contatado">Contatado</option>
-        <option value="interessado">Interessado</option>
-        <option value="quente">Quente 🔥</option>
-        <option value="reuniao_agendada">Reunião Agendada 📅</option>
-        <option value="fechado">Fechado ✅</option>
-      </select>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-primary" onclick="salvarStatus()">💾 Salvar Status</button>
-      <button class="btn" onclick="abrirWhatsApp()" style="color:var(--green); border-color:var(--green)">📲 Abrir WhatsApp</button>
-      <button class="btn btn-close" onclick="fecharModal()">✕ Fechar</button>
-    </div>
-  </div>
-</div>
-
-<script>
-  const API = 'https://playprime-bot-production.up.railway.app';
-  let todosLeads = [];
-  let filtroAtual = 'todos';
-  let leadAtual = null;
-
-  const statusLabels = {
-    novo: 'Novo',
-    contatado: 'Contatado',
-    interessado: 'Interessado ⚡',
-    quente: 'Quente 🔥',
-    reuniao_agendada: 'Reunião Agendada 📅',
-    fechado: 'Fechado ✅'
-  };
-
-  const statusColors = {
-    novo: 'var(--blue)',
-    contatado: 'var(--yellow)',
-    interessado: 'var(--accent)',
-    quente: 'var(--accent2)',
-    reuniao_agendada: 'var(--green)',
-    fechado: 'var(--muted)'
-  };
-
-  async function carregarLeads() {
-    try {
-      const [leadsRes, statusRes] = await Promise.all([
-        fetch(API + '/api/leads'),
-        fetch(API + '/status')
-      ]);
-
-      todosLeads = await leadsRes.json();
-      const status = await statusRes.json();
-
-      // Stats
-      const crm = status.crm || {};
-      document.getElementById('statTotal').textContent = crm.total ?? todosLeads.length;
-      document.getElementById('statNovos').textContent = crm.novos ?? 0;
-      document.getElementById('statContatados').textContent = crm.contatados ?? 0;
-      document.getElementById('statInteressados').textContent = crm.interessados ?? 0;
-      document.getElementById('statQuentes').textContent = crm.quentes ?? 0;
-      document.getElementById('statReunioes').textContent = crm.reuniao_agendada ?? 0;
-      document.getElementById('badgeTotal').textContent = todosLeads.length;
-
-      // Uptime
-      const up = status.uptime_segundos || 0;
-      const h = Math.floor(up / 3600);
-      const m = Math.floor((up % 3600) / 60);
-      document.getElementById('infoUptime').textContent = h > 0 ? h + 'h ' + m + 'm online' : m + 'm online';
-      document.getElementById('infoTimestamp').textContent = status.timestamp || '—';
-
-      // Status pill
-      document.getElementById('statusText').textContent = 'LIS Online';
-      document.getElementById('statusPill').style.background = 'rgba(61,214,140,0.1)';
-
-      renderLeads();
-      renderFunil(crm);
-
-    } catch(e) {
-      document.getElementById('statusText').textContent = 'Offline';
-      document.getElementById('statusPill').style.cssText = 'background:rgba(245,66,66,0.1);border-color:rgba(245,66,66,0.3);color:var(--red)';
-      document.getElementById('leadsList').innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">Erro ao conectar com o servidor</div></div>`;
-    }
-  }
-
-  function renderLeads() {
-    const el = document.getElementById('leadsList');
-    const lista = filtroAtual === 'todos'
-      ? todosLeads
-      : todosLeads.filter(l => l.status_crm === filtroAtual);
-
-    if (!lista.length) {
-      el.innerHTML = `<div class="empty"><div class="empty-icon">👷</div><div class="empty-text">Nenhum lead encontrado</div></div>`;
+}
+
+// ─── WEBHOOK META ─────────────────────────────────────────────────────────────
+app.get('/webhook', (req, res) => {
+  const { 'hub.mode': mode, 'hub.verify_token': token, 'hub.challenge': challenge } = req.query;
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) return res.status(200).send(challenge);
+  res.sendStatus(403);
+});
+
+app.post('/webhook', async (req, res) => {
+  res.sendStatus(200);
+  const message = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+  if (!message) return;
+
+  const from = message.from;
+  let text = '';
+
+  try {
+    if (message.type === 'text') {
+      text = message.text.body;
+    } else if (message.type === 'audio') {
+      text = await transcribeAudio(message.audio.id);
+    } else {
+      await sendMessage(from, 'Por enquanto só respondo texto e áudio! 😊');
       return;
     }
 
-    // Ordena por mais recente
-    const sorted = [...lista].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-
-    el.innerHTML = sorted.map(lead => {
-      const inicial = (lead.nome_empresa || lead.nome_contato || lead.phone || '?').charAt(0).toUpperCase();
-      const empresa = lead.nome_empresa || '(empresa não identificada)';
-      const contato = lead.nome_contato || '';
-      const equip = (lead.equipamentos_interesse || []).slice(0, 2).join(', ');
-      const phone = lead.phone ? lead.phone.replace('55', '+55 ').substring(0, 16) : '—';
-      const data = lead.updatedAt ? new Date(lead.updatedAt).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-
-      return `
-        <div class="lead-item" onclick="abrirModal('${lead.id}')">
-          <div class="lead-avatar">${inicial}</div>
-          <div class="lead-info">
-            <div class="lead-name">${empresa}</div>
-            <div class="lead-empresa">${contato || phone}</div>
-            ${equip ? `<div class="lead-equip">🔧 ${equip}</div>` : ''}
-          </div>
-          <div class="lead-meta">
-            <span class="badge" style="background:${statusColors[lead.status_crm]}20;color:${statusColors[lead.status_crm]};border:1px solid ${statusColors[lead.status_crm]}40;font-size:10px">
-              ${statusLabels[lead.status_crm] || lead.status_crm}
-            </span>
-            <div class="lead-time" style="margin-top:6px">${data}</div>
-          </div>
-        </div>`;
-    }).join('');
-  }
-
-  function renderFunil(crm) {
-    const el = document.getElementById('funilList');
-    const total = crm.total || 1;
-    const etapas = [
-      { label: 'Novos', count: crm.novos || 0, color: 'var(--blue)' },
-      { label: 'Contatados', count: crm.contatados || 0, color: 'var(--yellow)' },
-      { label: 'Interessados', count: crm.interessados || 0, color: 'var(--accent)' },
-      { label: 'Quentes', count: crm.quentes || 0, color: 'var(--accent2)' },
-      { label: 'Reuniões', count: crm.reuniao_agendada || 0, color: 'var(--green)' },
-      { label: 'Fechados', count: crm.fechados || 0, color: '#3dd68c' },
-    ];
-
-    el.innerHTML = etapas.map(e => `
-      <div class="funil-item">
-        <div class="funil-label">${e.label}</div>
-        <div class="funil-bar-bg">
-          <div class="funil-bar" style="width:${Math.round((e.count/total)*100)}%;background:${e.color}"></div>
-        </div>
-        <div class="funil-count" style="color:${e.color}">${e.count}</div>
-      </div>
-    `).join('');
-  }
-
-  function filtrar(status, btn) {
-    filtroAtual = status;
-    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-    if (btn) btn.classList.add('active');
-    renderLeads();
-  }
-
-  function abrirModal(id) {
-    leadAtual = todosLeads.find(l => l.id === id);
-    if (!leadAtual) return;
-
-    document.getElementById('mEmpresa').textContent = leadAtual.nome_empresa || '—';
-    document.getElementById('mContato').textContent = leadAtual.nome_contato || '—';
-    document.getElementById('mPhone').textContent = leadAtual.phone || '—';
-    document.getElementById('mCidade').textContent = leadAtual.cidade || '—';
-    document.getElementById('mEquip').textContent = (leadAtual.equipamentos_interesse || []).join(', ') || '—';
-    document.getElementById('mStatus').textContent = statusLabels[leadAtual.status_crm] || leadAtual.status_crm;
-    document.getElementById('mData').textContent = leadAtual.createdAt ? new Date(leadAtual.createdAt).toLocaleString('pt-BR') : '—';
-    document.getElementById('mStatusSelect').value = leadAtual.status_crm || 'novo';
-
-    document.getElementById('modalOverlay').classList.add('open');
-  }
-
-  function fecharModal(e) {
-    if (!e || e.target === document.getElementById('modalOverlay')) {
-      document.getElementById('modalOverlay').classList.remove('open');
-    }
-  }
-
-  async function salvarStatus() {
-    if (!leadAtual) return;
-    const novoStatus = document.getElementById('mStatusSelect').value;
+    let history = [];
     try {
-      await fetch(`${API}/api/leads/${leadAtual.id}/status`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: novoStatus })
-      });
-      leadAtual.status_crm = novoStatus;
-      document.getElementById('mStatus').textContent = statusLabels[novoStatus] || novoStatus;
-      await carregarLeads();
-      fecharModal();
-    } catch(e) {
-      alert('Erro ao salvar status!');
+      const stored = await redisClient.get(`chat:${from}`);
+      if (stored) history = JSON.parse(stored);
+    } catch {}
+
+    // Registra lead na primeira mensagem
+    if (history.length === 0) {
+      await upsertLead(from, { phone: from, status_crm: 'novo' });
     }
-  }
 
-  function abrirWhatsApp() {
-    if (!leadAtual || !leadAtual.phone) return;
-    window.open(`https://wa.me/${leadAtual.phone}`, '_blank');
-  }
+    const result = await askClaude(from, text, history);
+    const replyLower = result.reply.toLowerCase();
 
-  // Inicia
-  carregarLeads();
-  setInterval(carregarLeads, 30000);
-</script>
-</body>
-</html>
+    // ── Detecta nome do contato ───────────────────────────────────────────────
+    const nomeMatch = result.reply.match(/(?:olá|oi|prazer),?\s+([A-ZÀ-Ú][a-zà-ú]+)/i);
+    if (nomeMatch) await upsertLead(from, { nome_contato: nomeMatch[1] });
+
+    // ── Detecta cidade ────────────────────────────────────────────────────────
+    const cidadeMatch = result.reply.match(/(?:em|de|da cidade de)\s+([A-ZÀ-Ú][a-zà-ú\s]+)/i);
+    if (cidadeMatch) await upsertLead(from, { cidade: cidadeMatch[1].trim() });
+
+    // ── Detecta equipamentos de interesse ────────────────────────────────────
+    const equipamentos = ['betoneira','rolo compactador','martelo','gerador','andaime','fachadeiro','retroescavadeira','compressor','vibrador','bomba','alisadora','escora','cortadora','carrinho'];
+    const encontrados = equipamentos.filter(e => text.toLowerCase().includes(e));
+    if (encontrados.length > 0) {
+      const leads = await lerLeads();
+      const lead = leads.find(l => l.phone === from);
+      const novos = [...new Set([...(lead?.equipamentos_interesse || []), ...encontrados])];
+      await upsertLead(from, { equipamentos_interesse: novos, status_crm: 'interessado' });
+    }
+
+    // ── Detecta reunião agendada ──────────────────────────────────────────────
+    if (replyLower.includes('reunião confirmada') || replyLower.includes('visita confirmada')) {
+      await upsertLead(from, { status_crm: 'reuniao_agendada', reuniao_agendada: new Date().toISOString() });
+      await addFollowUp(from, 'Reunião/visita agendada pela LIS');
+    }
+
+    // ── Detecta NETO — envia link do WhatsApp ────────────────────────────────
+    if (replyLower.includes('neto')) {
+      await upsertLead(from, { status_crm: 'quente' });
+      await addFollowUp(from, 'Cliente encaminhado para o Neto');
+      await sendMessage(from, result.reply);
+      await sendMessage(from, '👷 Clique aqui para falar com o *Neto* agora:\nhttps://wa.me/5521974766117');
+      return;
+    }
+
+    // ── Detecta lead quente ───────────────────────────────────────────────────
+    if (replyLower.includes('nossa equipe vai entrar em contato')) {
+      await upsertLead(from, { status_crm: 'quente' });
+      await addFollowUp(from, 'Lead quente — solicitou contato comercial');
+    }
+
+    await sendMessage(from, result.reply);
+
+  } catch (err) {
+    console.error('Erro:', err.message);
+    await sendMessage(from, 'Tive um probleminha técnico! Tenta de novo em instantes. 😅');
+  }
+});
+
+// ─── CLAUDE / LIS ─────────────────────────────────────────────────────────────
+async function askClaude(from, userMessage, history) {
+  history.push({ role: 'user', content: userMessage });
+  if (history.length > 20) history = history.slice(-20);
+
+  const response = await axios.post(
+    'https://api.anthropic.com/v1/messages',
+    {
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
+      system: `Você é LIS, assistente comercial da Giltec Locações, empresa com 15 anos de experiência em locação de equipamentos para construção civil no Rio de Janeiro. Seja profissional, direto e simpático. Mensagens CURTAS — máximo 4 linhas.
+
+EQUIPAMENTOS QUE LOCAMOS:
+- Betoneiras (diversas capacidades)
+- Rolos compactadores e compactadores de solo
+- Martelos pneumáticos
+- Geradores de energia (diversas potências)
+- Andaimes e fachadeiros
+- Retroescavadeiras
+- Compressores de ar
+- Vibradores de concreto
+- Bombas d'água
+- Alisadoras de concreto
+- Escoras metálicas
+- Cortadoras de ferro, pedra e piso
+- Carrinhos manuais
+
+DIFERENCIAIS DA GILTEC:
+- 15 anos de experiência no mercado
+- Equipamentos revisados e prontos para uso
+- Entrega e retirada no canteiro de obra
+- Suporte técnico incluso
+- Atendimento em todo o Rio de Janeiro
+- Preços negociáveis para obras de grande porte
+- Sede em Duque de Caxias — atendemos Grande RJ
+
+ROTEIRO DE ATENDIMENTO:
+1. Se apresente como LIS e pergunte o nome do responsável e o nome da empresa. Depois que souber, NUNCA mais pergunte.
+2. Pergunte sobre a obra (tipo, localização no RJ, prazo estimado)
+3. Pergunte quais equipamentos precisam e por quanto tempo
+4. Informe que os preços variam conforme prazo e quantidade — nossa equipe faz proposta personalizada
+5. Ofereça agendar visita técnica sem compromisso: "Posso agendar uma visita técnica gratuita!"
+6. Quando cliente aceitar reunião/visita, confirme: "Reunião confirmada! Nossa equipe vai entrar em contato em breve para definir data e horário. 👷"
+7. Se cliente quiser falar com humano OU fechar negócio agora, diga: "Claro! Vou te conectar com o NETO agora mesmo! 😊" — use a palavra NETO para acionar o atendimento humano.
+
+CAPTAÇÃO DE DADOS — IMPORTANTE:
+- Quando souber o nome: diga "Olá, [Nome]!" para o sistema registrar
+- Quando souber a cidade: diga "Ótimo, você é de [Cidade]!" para o sistema registrar
+
+REGRAS:
+- Português formal mas acessível
+- Máximo 4 linhas por resposta
+- Emojis moderados (👷 🏗️ ✅)
+- Nunca invente preços (são negociáveis e personalizados)
+- Se perguntado se é IA, diga que é a LIS, assistente virtual da Giltec
+- NUNCA repita perguntas já feitas
+- Foco total em agendar visita técnica ou reunião comercial
+- Quando usar a palavra NETO na resposta, o sistema encaminha automaticamente para atendimento humano`,
+      messages: history
+    },
+    {
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      }
+    }
+  );
+
+  const reply = response.data.content[0].text;
+  history.push({ role: 'assistant', content: reply });
+
+  try {
+    await redisClient.setEx(`chat:${from}`, 604800, JSON.stringify(history));
+  } catch {}
+
+  return { reply, history };
+}
+
+// ─── WHATSAPP HELPERS ─────────────────────────────────────────────────────────
+async function transcribeAudio(audioId) {
+  const mediaRes = await axios.get(
+    `https://graph.facebook.com/v18.0/${audioId}`,
+    { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
+  );
+  const audioBuffer = await axios.get(mediaRes.data.url, {
+    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+    responseType: 'arraybuffer'
+  });
+  const form = new FormData();
+  form.append('file', Buffer.from(audioBuffer.data), { filename: 'audio.ogg', contentType: 'audio/ogg' });
+  form.append('model', 'whisper-1');
+  form.append('language', 'pt');
+  const whisperRes = await axios.post(
+    'https://api.openai.com/v1/audio/transcriptions',
+    form,
+    { headers: { ...form.getHeaders(), Authorization: `Bearer ${OPENAI_API_KEY}` } }
+  );
+  return whisperRes.data.text;
+}
+
+async function sendMessage(to, text) {
+  await axios.post(
+    `https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`,
+    { messaging_product: 'whatsapp', to, text: { body: text } },
+    { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' } }
+  );
+}
+
+// ─── API CRM ──────────────────────────────────────────────────────────────────
+
+// Recebe lead captado pelo n8n
+app.post('/api/crm/leads', async (req, res) => {
+  const lead = req.body;
+  await upsertLead(lead.phone || lead.whatsapp, lead);
+  res.json({ ok: true });
+});
+
+// n8n dispara o primeiro contato
+app.post('/api/crm/leads/primeiro-contato', async (req, res) => {
+  const { phone, nome_empresa } = req.body;
+  try {
+    const mensagem = `Olá! 👷 Sou a *LIS*, assistente virtual da *Giltec Locações*.\n\nVi que a *${nome_empresa}* atua no setor de construção civil e gostaria de apresentar nossos serviços de locação de equipamentos para obras no RJ.\n\nPosso te mostrar o que temos disponível? 😊`;
+    await sendMessage(phone, mensagem);
+    await upsertLead(phone, { status_crm: 'contatado' });
+    await addFollowUp(phone, 'Primeiro contato enviado pelo n8n');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Listar todos os leads
+app.get('/api/leads', async (req, res) => {
+  const leads = await lerLeads();
+  const { status } = req.query;
+  if (status) return res.json(leads.filter(l => l.status_crm === status));
+  res.json(leads);
+});
+
+// Atualizar status do lead
+app.put('/api/leads/:id/status', async (req, res) => {
+  const leads = await lerLeads();
+  const lead = leads.find(l => l.id === req.params.id);
+  if (!lead) return res.status(404).json({ error: 'Lead não encontrado' });
+  lead.status_crm = req.body.status;
+  lead.updatedAt = new Date().toISOString();
+  await salvarLeads(leads);
+  res.json({ ok: true });
+});
+
+// Adicionar follow-up manual
+app.post('/api/leads/:id/followup', async (req, res) => {
+  const leads = await lerLeads();
+  const lead = leads.find(l => l.id === req.params.id);
+  if (!lead) return res.status(404).json({ error: 'Lead não encontrado' });
+  lead.follow_ups.push({ data: new Date().toISOString(), nota: req.body.nota, tipo: 'manual' });
+  lead.updatedAt = new Date().toISOString();
+  await salvarLeads(leads);
+  res.json({ ok: true });
+});
+
+// Enviar mensagem manual para lead
+app.post('/api/leads/:id/message', async (req, res) => {
+  const leads = await lerLeads();
+  const lead = leads.find(l => l.id === req.params.id);
+  if (!lead) return res.status(404).json({ error: 'Lead não encontrado' });
+  try {
+    await sendMessage(lead.phone, req.body.message);
+    await addFollowUp(lead.phone, `Mensagem manual: ${req.body.message}`);
+    lead.status_crm = 'contatado';
+    await salvarLeads(leads);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Deletar lead
+app.delete('/api/leads/:id', async (req, res) => {
+  let leads = await lerLeads();
+  leads = leads.filter(l => l.id !== req.params.id);
+  await salvarLeads(leads);
+  res.json({ ok: true });
+});
+
+// ─── STATUS ───────────────────────────────────────────────────────────────────
+const startTime = Date.now();
+app.get('/status', async (req, res) => {
+  const leads = await lerLeads();
+  res.json({
+    status: 'online',
+    empresa: 'Giltec Locações',
+    assistente: 'LIS',
+    uptime_segundos: Math.floor((Date.now() - startTime) / 1000),
+    timestamp: new Date().toLocaleString('pt-BR'),
+    crm: {
+      total: leads.length,
+      novos: leads.filter(l => l.status_crm === 'novo').length,
+      contatados: leads.filter(l => l.status_crm === 'contatado').length,
+      interessados: leads.filter(l => l.status_crm === 'interessado').length,
+      quentes: leads.filter(l => l.status_crm === 'quente').length,
+      reuniao_agendada: leads.filter(l => l.status_crm === 'reuniao_agendada').length,
+      fechados: leads.filter(l => l.status_crm === 'fechado').length,
+    }
+  });
+});
+
+app.listen(PORT, () => console.log(`✅ Giltec Bot (LIS) rodando na porta ${PORT}`));
