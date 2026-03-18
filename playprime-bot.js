@@ -135,7 +135,16 @@ app.post('/webhook', async (req, res) => {
     // ── Detecta reunião agendada ──────────────────────────────────────────────
     if (replyLower.includes('reunião confirmada') || replyLower.includes('visita confirmada')) {
       upsertLead(from, { status_crm: 'reuniao_agendada', reuniao_agendada: new Date().toISOString() });
-      addFollowUp(from, 'Reunião/visita agendada pelo JOE');
+      addFollowUp(from, 'Reunião/visita agendada pelo LIS');
+    }
+
+    // ── Detecta NETO — envia link do WhatsApp ────────────────────────────────
+    if (replyLower.includes('neto')) {
+      upsertLead(from, { status_crm: 'quente' });
+      addFollowUp(from, 'Cliente encaminhado para o Neto');
+      await sendMessage(from, result.reply);
+      await sendMessage(from, '👷 Clique aqui para falar com o *Neto* agora:\nhttps://wa.me/5521974766117');
+      return;
     }
 
     // ── Detecta lead quente ───────────────────────────────────────────────────
@@ -152,7 +161,7 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// ─── CLAUDE / JOE ─────────────────────────────────────────────────────────────
+// ─── CLAUDE / LIS ─────────────────────────────────────────────────────────────
 async function askClaude(from, userMessage, history) {
   history.push({ role: 'user', content: userMessage });
   if (history.length > 20) history = history.slice(-20);
@@ -162,7 +171,7 @@ async function askClaude(from, userMessage, history) {
     {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
-      system: `Você é JOE, assistente comercial da Giltec Locações, empresa com 15 anos de experiência em locação de equipamentos para construção civil no Rio de Janeiro. Seja profissional, direto e simpático. Mensagens CURTAS — máximo 4 linhas.
+      system: `Você é LIS, assistente comercial da Giltec Locações, empresa com 15 anos de experiência em locação de equipamentos para construção civil no Rio de Janeiro. Seja profissional, direto e simpático. Mensagens CURTAS — máximo 4 linhas.
 
 EQUIPAMENTOS QUE LOCAMOS:
 - Betoneiras (diversas capacidades)
@@ -189,7 +198,7 @@ DIFERENCIAIS DA GILTEC:
 - Sede em Duque de Caxias — atendemos Grande RJ
 
 ROTEIRO DE ATENDIMENTO:
-1. Se apresente como JOE e pergunte o nome do responsável e o nome da empresa. Depois que souber, NUNCA mais pergunte.
+1. Se apresente como LIS e pergunte o nome do responsável e o nome da empresa. Depois que souber, NUNCA mais pergunte.
 2. Pergunte sobre a obra (tipo, localização no RJ, prazo estimado)
 3. Pergunte quais equipamentos precisam e por quanto tempo
 4. Informe que os preços variam conforme prazo e quantidade — nossa equipe faz proposta personalizada
@@ -206,7 +215,7 @@ REGRAS:
 - Máximo 4 linhas por resposta
 - Emojis moderados (👷 🏗️ ✅)
 - Nunca invente preços (são negociáveis e personalizados)
-- Se perguntado se é IA, diga que é o JOE, assistente virtual da Giltec
+- Se perguntado se é IA, diga que é o LIS, assistente virtual da Giltec
 - NUNCA repita perguntas já feitas
 - Foco total em agendar visita técnica ou reunião comercial
 - Quando usar a palavra NETO na resposta, o sistema encaminha automaticamente para atendimento humano`,
@@ -274,7 +283,7 @@ app.post('/api/crm/leads', (req, res) => {
 app.post('/api/crm/leads/primeiro-contato', async (req, res) => {
   const { phone, nome_empresa } = req.body;
   try {
-    const mensagem = `Olá! 👷 Sou o *JOE*, assistente virtual da *Giltec Locações*.\n\nVi que a *${nome_empresa}* atua no setor de construção civil e gostaria de apresentar nossos serviços de locação de equipamentos para obras no RJ.\n\nPosso te mostrar o que temos disponível? 😊`;
+    const mensagem = `Olá! 👷 Sou o *LIS*, assistente virtual da *Giltec Locações*.\n\nVi que a *${nome_empresa}* atua no setor de construção civil e gostaria de apresentar nossos serviços de locação de equipamentos para obras no RJ.\n\nPosso te mostrar o que temos disponível? 😊`;
     await sendMessage(phone, mensagem);
     upsertLead(phone, { status_crm: 'contatado' });
     addFollowUp(phone, 'Primeiro contato enviado pelo n8n');
@@ -345,7 +354,7 @@ app.get('/status', (req, res) => {
   res.json({
     status: 'online',
     empresa: 'Giltec Locações',
-    assistente: 'JOE',
+    assistente: 'LIS',
     uptime_segundos: Math.floor((Date.now() - startTime) / 1000),
     timestamp: new Date().toLocaleString('pt-BR'),
     crm: {
@@ -360,4 +369,4 @@ app.get('/status', (req, res) => {
   });
 });
 
-app.listen(PORT, () => console.log(`✅ Giltec Bot (JOE) rodando na porta ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Giltec Bot (LIS) rodando na porta ${PORT}`));
