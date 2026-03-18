@@ -270,7 +270,7 @@ app.post('/api/crm/leads', (req, res) => {
 });
 
 // n8n dispara o primeiro contato
-app.post('/api/crm/leads/:id/primeiro-contato', async (req, res) => {
+app.post('/api/crm/leads/primeiro-contato', async (req, res) => {
   const { phone, nome_empresa } = req.body;
   try {
     const mensagem = `Olá! 👷 Sou o *JOE*, assistente virtual da *Giltec Locações*.\n\nVi que a *${nome_empresa}* atua no setor de construção civil e gostaria de apresentar nossos serviços de locação de equipamentos para obras no RJ.\n\nPosso te mostrar o que temos disponível? 😊`;
