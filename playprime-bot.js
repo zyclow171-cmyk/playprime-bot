@@ -4,7 +4,6 @@ const axios = require('axios');
 const FormData = require('form-data');
 const redis = require('redis');
 const path = require('path');
-const fs = require('fs');
 
 const app = express();
 app.use(express.json());
@@ -21,8 +20,6 @@ const VERIFY_TOKEN      = process.env.VERIFY_TOKEN;
 const REDIS_URL         = process.env.REDIS_URL;
 const PORT              = process.env.PORT || 3000;
 
-const LEADS_FILE = path.join(__dirname, 'leads.json');
-
 // ─── REDIS ────────────────────────────────────────────────────────────────────
 const redisClient = redis.createClient({
   url: REDIS_URL,
@@ -31,18 +28,22 @@ const redisClient = redis.createClient({
 redisClient.on('error', (err) => console.log('Redis error:', err));
 redisClient.connect().catch(console.error);
 
-// ─── CRM / LEADS ──────────────────────────────────────────────────────────────
-function lerLeads() {
-  if (!fs.existsSync(LEADS_FILE)) return [];
-  try { return JSON.parse(fs.readFileSync(LEADS_FILE, 'utf8')); } catch { return []; }
+// ─── CRM / LEADS (salvo no Redis) ─────────────────────────────────────────────
+async function lerLeads() {
+  try {
+    const data = await redisClient.get('giltec:leads');
+    return data ? JSON.parse(data) : [];
+  } catch { return []; }
 }
 
-function salvarLeads(leads) {
-  fs.writeFileSync(LEADS_FILE, JSON.stringify(leads, null, 2));
+async function salvarLeads(leads) {
+  try {
+    await redisClient.set('giltec:leads', JSON.stringify(leads));
+  } catch (e) { console.log('Erro ao salvar leads:', e.message); }
 }
 
-function upsertLead(phone, dados) {
-  const leads = lerLeads();
+async function upsertLead(phone, dados) {
+  const leads = await lerLeads();
   const idx = leads.findIndex(l => l.phone === phone);
   if (idx >= 0) {
     leads[idx] = { ...leads[idx], ...dados, updatedAt: new Date().toISOString() };
@@ -63,16 +64,16 @@ function upsertLead(phone, dados) {
       ...dados
     });
   }
-  salvarLeads(leads);
+  await salvarLeads(leads);
 }
 
-function addFollowUp(phone, nota) {
-  const leads = lerLeads();
+async function addFollowUp(phone, nota) {
+  const leads = await lerLeads();
   const lead = leads.find(l => l.phone === phone);
   if (lead) {
     lead.follow_ups.push({ data: new Date().toISOString(), nota });
     lead.updatedAt = new Date().toISOString();
-    salvarLeads(leads);
+    await salvarLeads(leads);
   }
 }
 
@@ -109,7 +110,7 @@ app.post('/webhook', async (req, res) => {
 
     // Registra lead na primeira mensagem
     if (history.length === 0) {
-      upsertLead(from, { phone: from, status_crm: 'novo' });
+      await upsertLead(from, { phone: from, status_crm: 'novo' });
     }
 
     const result = await askClaude(from, text, history);
@@ -117,31 +118,32 @@ app.post('/webhook', async (req, res) => {
 
     // ── Detecta nome do contato ───────────────────────────────────────────────
     const nomeMatch = result.reply.match(/(?:olá|oi|prazer),?\s+([A-ZÀ-Ú][a-zà-ú]+)/i);
-    if (nomeMatch) upsertLead(from, { nome_contato: nomeMatch[1] });
+    if (nomeMatch) await upsertLead(from, { nome_contato: nomeMatch[1] });
 
     // ── Detecta cidade ────────────────────────────────────────────────────────
     const cidadeMatch = result.reply.match(/(?:em|de|da cidade de)\s+([A-ZÀ-Ú][a-zà-ú\s]+)/i);
-    if (cidadeMatch) upsertLead(from, { cidade: cidadeMatch[1].trim() });
+    if (cidadeMatch) await upsertLead(from, { cidade: cidadeMatch[1].trim() });
 
     // ── Detecta equipamentos de interesse ────────────────────────────────────
     const equipamentos = ['betoneira','rolo compactador','martelo','gerador','andaime','fachadeiro','retroescavadeira','compressor','vibrador','bomba','alisadora','escora','cortadora','carrinho'];
     const encontrados = equipamentos.filter(e => text.toLowerCase().includes(e));
     if (encontrados.length > 0) {
-      const lead = lerLeads().find(l => l.phone === from);
+      const leads = await lerLeads();
+      const lead = leads.find(l => l.phone === from);
       const novos = [...new Set([...(lead?.equipamentos_interesse || []), ...encontrados])];
-      upsertLead(from, { equipamentos_interesse: novos, status_crm: 'interessado' });
+      await upsertLead(from, { equipamentos_interesse: novos, status_crm: 'interessado' });
     }
 
     // ── Detecta reunião agendada ──────────────────────────────────────────────
     if (replyLower.includes('reunião confirmada') || replyLower.includes('visita confirmada')) {
-      upsertLead(from, { status_crm: 'reuniao_agendada', reuniao_agendada: new Date().toISOString() });
-      addFollowUp(from, 'Reunião/visita agendada pelo LIS');
+      await upsertLead(from, { status_crm: 'reuniao_agendada', reuniao_agendada: new Date().toISOString() });
+      await addFollowUp(from, 'Reunião/visita agendada pela LIS');
     }
 
     // ── Detecta NETO — envia link do WhatsApp ────────────────────────────────
     if (replyLower.includes('neto')) {
-      upsertLead(from, { status_crm: 'quente' });
-      addFollowUp(from, 'Cliente encaminhado para o Neto');
+      await upsertLead(from, { status_crm: 'quente' });
+      await addFollowUp(from, 'Cliente encaminhado para o Neto');
       await sendMessage(from, result.reply);
       await sendMessage(from, '👷 Clique aqui para falar com o *Neto* agora:\nhttps://wa.me/5521974766117');
       return;
@@ -149,8 +151,8 @@ app.post('/webhook', async (req, res) => {
 
     // ── Detecta lead quente ───────────────────────────────────────────────────
     if (replyLower.includes('nossa equipe vai entrar em contato')) {
-      upsertLead(from, { status_crm: 'quente' });
-      addFollowUp(from, 'Lead quente — solicitou contato comercial');
+      await upsertLead(from, { status_crm: 'quente' });
+      await addFollowUp(from, 'Lead quente — solicitou contato comercial');
     }
 
     await sendMessage(from, result.reply);
@@ -171,22 +173,42 @@ async function askClaude(from, userMessage, history) {
     {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
-      system: `Você é LIS, assistente comercial da Giltec Locações, empresa com 15 anos de experiência em locação de equipamentos para construção civil no Rio de Janeiro. Seja profissional, direto e simpático. Mensagens CURTAS — máximo 4 linhas.
+      system: `Você é LIS, assistente virtual da Giltec Locações, empresa com 15 anos de experiência em locação de equipamentos para construção civil no Rio de Janeiro. Seja profissional, direta e simpática. Mensagens CURTAS — máximo 4 linhas.
 
-EQUIPAMENTOS QUE LOCAMOS:
+EQUIPAMENTOS DISPONÍVEIS PARA LOCAÇÃO:
+- Containers
+- Exaustores
+- Equipamentos para lava jato
+- Rolos compactadores
+- Sopradores térmicos
+- Perfuratrizes
+- Martelos pneumáticos de 30kg
+- Lixadeiras
+- Serras mármore
+- Cortadoras de piso manuais
+- Placas vibratórias
+- Vibradores portáteis
+- Níveis a laser
+- Compactadores de solo
+- Passa-fios de fibra
+- Parafusadeiras
+- Máquinas de solda
+- Aspiradores de pó
+- Dutos condutores para escoar entulho de obra
+- Bombas de lama
+- Serras de bancada
+- Cilindros de solda oxiacetileno
 - Betoneiras (diversas capacidades)
-- Rolos compactadores e compactadores de solo
-- Martelos pneumáticos
-- Geradores de energia (diversas potências)
 - Andaimes e fachadeiros
-- Retroescavadeiras
 - Compressores de ar
-- Vibradores de concreto
+- Geradores de energia (diversas potências)
+- Escoras metálicas
+- Retroescavadeiras
 - Bombas d'água
 - Alisadoras de concreto
-- Escoras metálicas
-- Cortadoras de ferro, pedra e piso
 - Carrinhos manuais
+
+SITE DA GILTEC: https://gilteclocacoes.com.br — envie quando cliente quiser ver os equipamentos.
 
 DIFERENCIAIS DA GILTEC:
 - 15 anos de experiência no mercado
@@ -201,24 +223,26 @@ ROTEIRO DE ATENDIMENTO:
 1. Se apresente como LIS e pergunte o nome do responsável e o nome da empresa. Depois que souber, NUNCA mais pergunte.
 2. Pergunte sobre a obra (tipo, localização no RJ, prazo estimado)
 3. Pergunte quais equipamentos precisam e por quanto tempo
-4. Informe que os preços variam conforme prazo e quantidade — nossa equipe faz proposta personalizada
-5. Ofereça agendar visita técnica sem compromisso: "Posso agendar uma visita técnica gratuita!"
+4. Quando cliente perguntar sobre equipamento, diga que vai consultar disponibilidade e preço com o Neto
+5. Ofereça conectar com o Neto para fazer uma proposta personalizada
 6. Quando cliente aceitar reunião/visita, confirme: "Reunião confirmada! Nossa equipe vai entrar em contato em breve para definir data e horário. 👷"
-7. Se cliente quiser falar com humano OU fechar negócio agora, diga: "Claro! Vou te conectar com o NETO agora mesmo! 😊" — use a palavra NETO para acionar o atendimento humano.
+7. Se cliente quiser falar com humano, saber preço ou fechar negócio, diga: "Claro! Vou te conectar com o NETO agora mesmo! 😊" — use a palavra NETO para acionar o atendimento.
 
 CAPTAÇÃO DE DADOS — IMPORTANTE:
 - Quando souber o nome: diga "Olá, [Nome]!" para o sistema registrar
 - Quando souber a cidade: diga "Ótimo, você é de [Cidade]!" para o sistema registrar
 
-REGRAS:
+REGRAS IMPORTANTES:
 - Português formal mas acessível
 - Máximo 4 linhas por resposta
 - Emojis moderados (👷 🏗️ ✅)
-- Nunca invente preços (são negociáveis e personalizados)
-- Se perguntado se é IA, diga que é o LIS, assistente virtual da Giltec
+- NUNCA diga que não tem algum equipamento — sempre diga que vai consultar disponibilidade com o Neto
+- NUNCA informe preços — todos os preços e disponibilidade são consultados com o Neto
+- O NETO é o vendedor da Giltec — ele verifica estoque e preços e fecha negócios
+- Se perguntado se é IA, diga que é a LIS, assistente virtual da Giltec
 - NUNCA repita perguntas já feitas
-- Foco total em agendar visita técnica ou reunião comercial
-- Quando usar a palavra NETO na resposta, o sistema encaminha automaticamente para atendimento humano`,
+- Foco total em conectar o cliente com o Neto para fechar negócio
+- Quando usar a palavra NETO na resposta, o sistema encaminha automaticamente para o vendedor`,
       messages: history
     },
     {
@@ -273,9 +297,9 @@ async function sendMessage(to, text) {
 // ─── API CRM ──────────────────────────────────────────────────────────────────
 
 // Recebe lead captado pelo n8n
-app.post('/api/crm/leads', (req, res) => {
+app.post('/api/crm/leads', async (req, res) => {
   const lead = req.body;
-  upsertLead(lead.phone || lead.whatsapp, lead);
+  await upsertLead(lead.phone || lead.whatsapp, lead);
   res.json({ ok: true });
 });
 
@@ -283,10 +307,10 @@ app.post('/api/crm/leads', (req, res) => {
 app.post('/api/crm/leads/primeiro-contato', async (req, res) => {
   const { phone, nome_empresa } = req.body;
   try {
-    const mensagem = `Olá! 👷 Sou o *LIS*, assistente virtual da *Giltec Locações*.\n\nVi que a *${nome_empresa}* atua no setor de construção civil e gostaria de apresentar nossos serviços de locação de equipamentos para obras no RJ.\n\nPosso te mostrar o que temos disponível? 😊`;
+    const mensagem = `Olá! 👷 Sou a *LIS*, assistente virtual da *Giltec Locações*.\n\nVi que a *${nome_empresa}* atua no setor de construção civil e gostaria de apresentar nossos serviços de locação de equipamentos para obras no RJ.\n\nPosso te mostrar o que temos disponível? 😊`;
     await sendMessage(phone, mensagem);
-    upsertLead(phone, { status_crm: 'contatado' });
-    addFollowUp(phone, 'Primeiro contato enviado pelo n8n');
+    await upsertLead(phone, { status_crm: 'contatado' });
+    await addFollowUp(phone, 'Primeiro contato enviado pelo n8n');
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -294,45 +318,45 @@ app.post('/api/crm/leads/primeiro-contato', async (req, res) => {
 });
 
 // Listar todos os leads
-app.get('/api/leads', (req, res) => {
-  const leads = lerLeads();
+app.get('/api/leads', async (req, res) => {
+  const leads = await lerLeads();
   const { status } = req.query;
   if (status) return res.json(leads.filter(l => l.status_crm === status));
   res.json(leads);
 });
 
 // Atualizar status do lead
-app.put('/api/leads/:id/status', (req, res) => {
-  const leads = lerLeads();
+app.put('/api/leads/:id/status', async (req, res) => {
+  const leads = await lerLeads();
   const lead = leads.find(l => l.id === req.params.id);
   if (!lead) return res.status(404).json({ error: 'Lead não encontrado' });
   lead.status_crm = req.body.status;
   lead.updatedAt = new Date().toISOString();
-  salvarLeads(leads);
+  await salvarLeads(leads);
   res.json({ ok: true });
 });
 
 // Adicionar follow-up manual
-app.post('/api/leads/:id/followup', (req, res) => {
-  const leads = lerLeads();
+app.post('/api/leads/:id/followup', async (req, res) => {
+  const leads = await lerLeads();
   const lead = leads.find(l => l.id === req.params.id);
   if (!lead) return res.status(404).json({ error: 'Lead não encontrado' });
   lead.follow_ups.push({ data: new Date().toISOString(), nota: req.body.nota, tipo: 'manual' });
   lead.updatedAt = new Date().toISOString();
-  salvarLeads(leads);
+  await salvarLeads(leads);
   res.json({ ok: true });
 });
 
 // Enviar mensagem manual para lead
 app.post('/api/leads/:id/message', async (req, res) => {
-  const leads = lerLeads();
+  const leads = await lerLeads();
   const lead = leads.find(l => l.id === req.params.id);
   if (!lead) return res.status(404).json({ error: 'Lead não encontrado' });
   try {
     await sendMessage(lead.phone, req.body.message);
-    addFollowUp(lead.phone, `Mensagem manual: ${req.body.message}`);
+    await addFollowUp(lead.phone, `Mensagem manual: ${req.body.message}`);
     lead.status_crm = 'contatado';
-    salvarLeads(leads);
+    await salvarLeads(leads);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -340,17 +364,17 @@ app.post('/api/leads/:id/message', async (req, res) => {
 });
 
 // Deletar lead
-app.delete('/api/leads/:id', (req, res) => {
-  let leads = lerLeads();
+app.delete('/api/leads/:id', async (req, res) => {
+  let leads = await lerLeads();
   leads = leads.filter(l => l.id !== req.params.id);
-  salvarLeads(leads);
+  await salvarLeads(leads);
   res.json({ ok: true });
 });
 
 // ─── STATUS ───────────────────────────────────────────────────────────────────
 const startTime = Date.now();
-app.get('/status', (req, res) => {
-  const leads = lerLeads();
+app.get('/status', async (req, res) => {
+  const leads = await lerLeads();
   res.json({
     status: 'online',
     empresa: 'Giltec Locações',
