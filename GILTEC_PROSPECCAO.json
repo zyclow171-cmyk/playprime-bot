@@ -1,0 +1,150 @@
+{
+  "name": "GILTEC - Prospeccao Ampliada",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 2,4"
+            }
+          ]
+        }
+      },
+      "name": "Agendador Prospeccao",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [0, 0],
+      "typeVersion": 1.1,
+      "id": "pr-001"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Termos ampliados para construção civil, rodovias, reformas\nconst termos = [\n  // Construtoras\n  'construtora Rio de Janeiro',\n  'construtora Duque de Caxias',\n  'construtora Niterói',\n  'construtora Nova Iguaçu',\n  'construtora São Gonçalo',\n  'construtora Campos dos Goytacazes',\n  'construtora Petrópolis',\n  'construtora Volta Redonda',\n  'construtora Macaé',\n  'construtora Cabo Frio',\n  // Rodovias e Infraestrutura\n  'empresa de pavimentação Rio de Janeiro',\n  'empresa de terraplanagem Rio de Janeiro',\n  'construtora de rodovias Rio de Janeiro',\n  'empresa de infraestrutura Rio de Janeiro',\n  'empresa de obras públicas Rio de Janeiro',\n  'empreiteira de estradas Rio de Janeiro',\n  // Reformas\n  'empresa de reforma Rio de Janeiro',\n  'empresa de reforma Duque de Caxias',\n  'empresa de reforma Niterói',\n  'empresa de reforma Nova Iguaçu',\n  'reforma predial Rio de Janeiro',\n  'reforma comercial Rio de Janeiro',\n  'reforma residencial Rio de Janeiro',\n  // Outros segmentos\n  'incorporadora Rio de Janeiro',\n  'empreiteira Rio de Janeiro',\n  'empresa de demolição Rio de Janeiro',\n  'empresa de saneamento Rio de Janeiro',\n  'empresa de drenagem Rio de Janeiro',\n  'empresa de escavação Rio de Janeiro',\n  'manutenção predial Rio de Janeiro'\n];\n\nreturn termos.map(termo => ({ json: { termo } }));"
+      },
+      "name": "Gerar Termos Ampliados",
+      "type": "n8n-nodes-base.code",
+      "position": [220, 0],
+      "typeVersion": 2,
+      "id": "pr-002"
+    },
+    {
+      "parameters": {
+        "url": "https://maps.googleapis.com/maps/api/place/textsearch/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "query", "value": "={{ $json.termo }}" },
+            { "name": "key", "value": "AIzaSyAvUxeJBi0lBs5IthNDSwT6-jue4XLSpjw" },
+            { "name": "language", "value": "pt-BR" },
+            { "name": "region", "value": "br" }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Google Maps Buscar",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [440, 0],
+      "typeVersion": 4.1,
+      "id": "pr-003"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.item.json.results || [];\nreturn results.map(place => ({\n  json: {\n    place_id: place.place_id,\n    nome: place.name,\n    endereco: place.formatted_address,\n    status: place.business_status,\n    rating: place.rating || null,\n    total_avaliacoes: place.user_ratings_total || 0\n  }\n})).filter(r => r.json.status === 'OPERATIONAL');"
+      },
+      "name": "Normalizar Resultados",
+      "type": "n8n-nodes-base.code",
+      "position": [660, 0],
+      "typeVersion": 2,
+      "id": "pr-004"
+    },
+    {
+      "parameters": {
+        "url": "https://maps.googleapis.com/maps/api/place/details/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "place_id", "value": "={{ $json.place_id }}" },
+            { "name": "fields", "value": "name,formatted_phone_number,website,formatted_address" },
+            { "name": "key", "value": "AIzaSyAvUxeJBi0lBs5IthNDSwT6-jue4XLSpjw" },
+            { "name": "language", "value": "pt-BR" }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Buscar Telefone",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [880, 0],
+      "typeVersion": 4.1,
+      "id": "pr-005"
+    },
+    {
+      "parameters": {
+        "jsCode": "const detail = $input.item.json.result || {};\nconst prev = $('Normalizar Resultados').item.json;\n\nconst telefone = detail.formatted_phone_number\n  ? detail.formatted_phone_number.replace(/\\D/g, '')\n  : null;\n\nif (!telefone) return [];\n\nlet whatsapp = telefone;\nif (!whatsapp.startsWith('55')) whatsapp = '55' + whatsapp;\nif (whatsapp.length === 12) whatsapp = whatsapp.slice(0,4) + '9' + whatsapp.slice(4);\n\nreturn [{\n  json: {\n    id: `GILTEC-${Date.now()}-${Math.random().toString(36).substr(2,5).toUpperCase()}`,\n    nome_empresa: prev.nome,\n    endereco: detail.formatted_address || prev.endereco,\n    telefone_raw: detail.formatted_phone_number,\n    whatsapp,\n    site: detail.website || '',\n    rating: prev.rating,\n    total_avaliacoes: prev.total_avaliacoes,\n    status_crm: 'novo',\n    primeiro_contato: false,\n    data_captacao: new Date().toISOString(),\n    follow_ups: []\n  }\n}];"
+      },
+      "name": "Montar Lead",
+      "type": "n8n-nodes-base.code",
+      "position": [1100, 0],
+      "typeVersion": 2,
+      "id": "pr-006"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://playprime-bot-production.up.railway.app/api/crm/leads",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "name": "Salvar no CRM",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1320, 0],
+      "typeVersion": 4.1,
+      "id": "pr-007"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://playprime-bot-production.up.railway.app/api/crm/leads/primeiro-contato",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ phone: $('Montar Lead').item.json.whatsapp, nome_empresa: $('Montar Lead').item.json.nome_empresa }) }}",
+        "options": {}
+      },
+      "name": "Disparar Primeiro Contato",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1540, 0],
+      "typeVersion": 4.1,
+      "id": "pr-008"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Agendador Prospeccao": {
+      "main": [[{ "node": "Gerar Termos Ampliados", "type": "main", "index": 0 }]]
+    },
+    "Gerar Termos Ampliados": {
+      "main": [[{ "node": "Google Maps Buscar", "type": "main", "index": 0 }]]
+    },
+    "Google Maps Buscar": {
+      "main": [[{ "node": "Normalizar Resultados", "type": "main", "index": 0 }]]
+    },
+    "Normalizar Resultados": {
+      "main": [[{ "node": "Buscar Telefone", "type": "main", "index": 0 }]]
+    },
+    "Buscar Telefone": {
+      "main": [[{ "node": "Montar Lead", "type": "main", "index": 0 }]]
+    },
+    "Montar Lead": {
+      "main": [[{ "node": "Salvar no CRM", "type": "main", "index": 0 }]]
+    },
+    "Salvar no CRM": {
+      "main": [[{ "node": "Disparar Primeiro Contato", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "id": "giltec-prospeccao",
+  "tags": []
+}
