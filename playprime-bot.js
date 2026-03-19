@@ -363,6 +363,29 @@ app.post('/api/leads/:id/message', async (req, res) => {
   }
 });
 
+// Follow-up automático disparado pelo n8n
+app.post('/api/leads/followup-auto', async (req, res) => {
+  const { phone, mensagem, tentativa, lead_id } = req.body;
+  try {
+    await sendMessage(phone, mensagem);
+    const leads = await lerLeads();
+    const lead = leads.find(l => l.id === lead_id || l.phone === phone);
+    if (lead) {
+      lead.follow_ups.push({
+        data: new Date().toISOString(),
+        nota: `Follow-up automático #${tentativa} enviado pela LIS`,
+        tipo: 'automatico'
+      });
+      lead.updatedAt = new Date().toISOString();
+      if (tentativa >= 3) lead.status_crm = 'sem_resposta';
+      await salvarLeads(leads);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Deletar lead
 app.delete('/api/leads/:id', async (req, res) => {
   let leads = await lerLeads();
