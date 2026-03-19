@@ -1,0 +1,87 @@
+{
+  "name": "GILTEC - Follow-up Automatico",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-5"
+            }
+          ]
+        }
+      },
+      "name": "Agendador Follow-up",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [0, 0],
+      "typeVersion": 1.1,
+      "id": "fu-001"
+    },
+    {
+      "parameters": {
+        "url": "https://playprime-bot-production.up.railway.app/api/leads",
+        "options": {}
+      },
+      "name": "Buscar Todos os Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [220, 0],
+      "typeVersion": 4.1,
+      "id": "fu-002"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filtrar leads que precisam de follow-up\nconst leads = $input.item.json;\nconst agora = new Date();\nconst HORAS_48 = 48 * 60 * 60 * 1000;\nconst MAX_TENTATIVAS = 3;\n\nconst statusValidos = ['novo', 'contatado', 'interessado'];\n\nconst leadsFiltrados = leads.filter(lead => {\n  // Só leads com status válido\n  if (!statusValidos.includes(lead.status_crm)) return false;\n  \n  // Só leads com telefone\n  if (!lead.phone) return false;\n  \n  // Verifica tentativas de follow-up\n  const followUps = (lead.follow_ups || []).filter(f => f.nota && f.nota.includes('Follow-up'));\n  if (followUps.length >= MAX_TENTATIVAS) return false;\n  \n  // Verifica se já passou 48h desde última atualização\n  const ultimaAtualizacao = new Date(lead.updatedAt || lead.createdAt);\n  const diff = agora - ultimaAtualizacao;\n  if (diff < HORAS_48) return false;\n  \n  return true;\n});\n\nconsole.log(`Leads para follow-up: ${leadsFiltrados.length}`);\nreturn leadsFiltrados.map(lead => ({ json: lead }));"
+      },
+      "name": "Filtrar Leads para Follow-up",
+      "type": "n8n-nodes-base.code",
+      "position": [440, 0],
+      "typeVersion": 2,
+      "id": "fu-003"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Montar mensagem de follow-up baseada no número de tentativas\nconst lead = $input.item.json;\nconst followUps = (lead.follow_ups || []).filter(f => f.nota && f.nota.includes('Follow-up'));\nconst tentativa = followUps.length + 1;\n\nlet mensagem = '';\nconst nome = lead.nome_contato || 'tudo bem';\nconst empresa = lead.nome_empresa ? ` da *${lead.nome_empresa}*` : '';\n\nif (tentativa === 1) {\n  mensagem = `Olá! 👷 Aqui é a *LIS* da *Giltec Locações* novamente.\\n\\nPassei para saber se ${nome}${empresa} ainda tem interesse em nossos equipamentos para construção civil.\\n\\nPosso te ajudar com alguma coisa? 😊`;\n} else if (tentativa === 2) {\n  mensagem = `Oi! 🏗️ LIS da Giltec aqui.\\n\\nSei que você está ocupado(a), mas queria deixar nosso site para você dar uma olhada nos equipamentos disponíveis:\\n👉 https://gilteclocacoes.com.br\\n\\nQualquer dúvida é só chamar! 😊`;\n} else if (tentativa === 3) {\n  mensagem = `Olá! 👷 Última mensagem da LIS, Giltec Locações.\\n\\nSe precisar de equipamentos para sua obra no RJ, estamos à disposição! Temos mais de 30 tipos de equipamentos disponíveis.\\n\\nAté mais e sucesso na obra! 🏗️`;\n}\n\nreturn [{ json: { ...lead, mensagem, tentativa } }];"
+      },
+      "name": "Montar Mensagem Follow-up",
+      "type": "n8n-nodes-base.code",
+      "position": [660, 0],
+      "typeVersion": 2,
+      "id": "fu-004"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://playprime-bot-production.up.railway.app/api/leads/followup-auto",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ phone: $json.phone, mensagem: $json.mensagem, tentativa: $json.tentativa, lead_id: $json.id }) }}",
+        "options": {}
+      },
+      "name": "Disparar Follow-up WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [880, 0],
+      "typeVersion": 4.1,
+      "id": "fu-005"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Agendador Follow-up": {
+      "main": [[{ "node": "Buscar Todos os Leads", "type": "main", "index": 0 }]]
+    },
+    "Buscar Todos os Leads": {
+      "main": [[{ "node": "Filtrar Leads para Follow-up", "type": "main", "index": 0 }]]
+    },
+    "Filtrar Leads para Follow-up": {
+      "main": [[{ "node": "Montar Mensagem Follow-up", "type": "main", "index": 0 }]]
+    },
+    "Montar Mensagem Follow-up": {
+      "main": [[{ "node": "Disparar Follow-up WhatsApp", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "id": "giltec-followup",
+  "tags": []
+}
